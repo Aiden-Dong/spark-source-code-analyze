@@ -20,7 +20,7 @@ package org.apache.spark.shuffle
 import org.apache.spark.annotation.DeveloperApi
 
 /**
- * An opaque handle to a shuffle, used by a ShuffleManager to pass information about it to tasks.
+ * 一个不透明的句柄，由ShuffleManager用于将与洗牌相关的信息传递给任务.
  *
  * @param shuffleId ID of the shuffle
  */

@@ -25,33 +25,30 @@ import org.apache.spark.rdd.RDD
 import org.apache.spark.util.CallSite
 
 /**
- * A stage is a set of parallel tasks all computing the same function that need to run as part
- * of a Spark job, where all the tasks have the same shuffle dependencies. Each DAG of tasks run
- * by the scheduler is split up into stages at the boundaries where shuffle occurs, and then the
- * DAGScheduler runs these stages in topological order.
+ * stage 是一组并行task，这些task都有计算相同的函数(位于RDD中)，并且作为 Spark Job的一部分运行。
+ * 这些task具有相同的shuffle依赖关系。
+ * DAGSheduler 按照shuffle的边界将RDD图拆分成若干Stage，然后 DAGScheduler 按照 拓扑顺序运行这些Stage。
  *
- * Each Stage can either be a shuffle map stage, in which case its tasks' results are input for
- * other stage(s), or a result stage, in which case its tasks directly compute a Spark action
- * (e.g. count(), save(), etc) by running a function on an RDD. For shuffle map stages, we also
- * track the nodes that each output partition is on.
+ * Stage 的实现有两种 :
+ * 1. ShuffleMapStage: 它的结果数据作为其他Stage的输入。
+ * 2. ResultStage: 它的task通过在RDD上运行函数直接计算（例如 count()、save() 等）。
+ * 对于ShuffleMapStage，我们还会追踪每个输出分区所在的节点。
  *
- * Each Stage also has a firstJobId, identifying the job that first submitted the stage.  When FIFO
- * scheduling is used, this allows Stages from earlier jobs to be computed first or recovered
- * faster on failure.
+ * 每个stage还有一个firstJobId，用于标识首次提交该阶段的作业。
+ * 当使用 FIFO 调度时，这允许较早作业的阶段被优先计算或在失败后更快地恢复。
  *
- * Finally, a single stage can be re-executed in multiple attempts due to fault recovery. In that
- * case, the Stage object will track multiple StageInfo objects to pass to listeners or the web UI.
- * The latest one will be accessible through latestInfo.
+ * 最后，由于故障恢复的需要，单个stage可以重试多次。
+ * 在这种情况下，stage对象将跟踪多个 StageInfo 对象，以便传递给Listener或 Web UI。
+ * 最新的 StageInfo 可通过 latestInfo 访问。
  *
- * @param id Unique stage ID
- * @param rdd RDD that this stage runs on: for a shuffle map stage, it's the RDD we run map tasks
- *   on, while for a result stage, it's the target RDD that we ran an action on
- * @param numTasks Total number of tasks in stage; result stages in particular may not need to
- *   compute all partitions, e.g. for first(), lookup(), and take().
- * @param parents List of stages that this stage depends on (through shuffle dependencies).
- * @param firstJobId ID of the first job this stage was part of, for FIFO scheduling.
- * @param callSite Location in the user program associated with this stage: either where the target
- *   RDD was created, for a shuffle map stage, or where the action for a result stage was called.
+ * @param id StageId , 唯一表示一个Stage
+ * @param rdd
+ *   该stage运行的RDD：对于ShuffleMapStage，它是我们在上面运行shuffle操作以前的map task RDD
+ *   而对于ResultStage，它是我们在其中运行了一个操作的目标RDD。
+ * @param numTasks stage中的总task数；特别是对于ResultStage，可能不需要计算所有partition，例如用于first()、lookup() 和 take() 等操作。
+ * @param parents 该Stage依赖的上游Stage(通过 ShuffleDependency 依赖)
+ * @param firstJobId 当前stage所属的JobId.
+ * @param callSite  与该stage相关联的用户程序位置：对于ShuffleMapStage，是目标RDD的创建位置；对于ResultStage，是调用操作的位置。
  */
 private[scheduler] abstract class Stage(
     val id: Int,

@@ -340,6 +340,7 @@ private[spark] class DAGScheduler(
 
     shuffleIdToMapStage.get(shuffleDep.shuffleId) match {
       case Some(stage) =>
+        // 表示这个Stage已经存在，直接返回引用 Stage 即可
         stage
 
       case None =>
@@ -349,11 +350,12 @@ private[spark] class DAGScheduler(
           // 但在进入 foreach 循环处理特定依赖项时，由于先前依赖项的阶段创建过程，
           // 有可能它已经被添加到了 shuffleIdToMapStage 中。
           // 有关更多信息，请参见 SPARK-13902。
+          // 表示如果这个dependency 没有被建立 stage, 则给其创建stage
           if (!shuffleIdToMapStage.contains(dep.shuffleId)) {
             createShuffleMapStage(dep, firstJobId)
           }
         }
-        // Finally, create a stage for the given shuffle dependency.
+        // 为当前的ShuffleDependency 构建
         createShuffleMapStage(shuffleDep, firstJobId)
     }
   }
@@ -377,7 +379,8 @@ private[spark] class DAGScheduler(
    * 针对当前的 ShuffleDependency 创建一个 ShuffleMapStage
    */
   def createShuffleMapStage(shuffleDep: ShuffleDependency[_, _, _], jobId: Int): ShuffleMapStage = {
-    val rdd = shuffleDep.rdd
+    val rdd = shuffleDep.rdd                         // ShuffleDependency 对应的 RDD
+
     checkBarrierStageWithDynamicAllocation(rdd)
     checkBarrierStageWithNumSlots(rdd)
     checkBarrierStageWithRDDChainPattern(rdd, rdd.getNumPartitions)
@@ -468,25 +471,25 @@ private[spark] class DAGScheduler(
     }.toList
   }
 
-  // 寻找尚未在“shuffleToMapStage”中注册的祖先Shuffle依赖项。
+  // 基于广度优先遍历， 获取到所有没有被建立stage 上游 shuffledepency 集合
   private def getMissingAncestorShuffleDependencies(
       rdd: RDD[_]): ArrayStack[ShuffleDependency[_, _, _]] = {
 
     val ancestors = new ArrayStack[ShuffleDependency[_, _, _]]
-    val visited = new HashSet[RDD[_]]
+    val visited = new HashSet[RDD[_]]              // 记录已经被查看的 RDD
 
-    val waitingForVisit = new ArrayStack[RDD[_]]
-    waitingForVisit.push(rdd)                     // root rdd 压栈
+    val waitingForVisit = new ArrayStack[RDD[_]]   // 所有等待被检查的集合
+    waitingForVisit.push(rdd)                      // root rdd 压栈
 
     while (waitingForVisit.nonEmpty) {
       val toVisit = waitingForVisit.pop()
-      if (!visited(toVisit)) {
+      if (!visited(toVisit)) {     // 如果这个rdd 没有被查看
         visited += toVisit
         // 获取这个RDD 的依赖 shuffleDependency
         getShuffleDependencies(toVisit).foreach { shuffleDep =>
-          if (!shuffleIdToMapStage.contains(shuffleDep.shuffleId)) {
-            ancestors.push(shuffleDep)
-            waitingForVisit.push(shuffleDep.rdd)
+          if (!shuffleIdToMapStage.contains(shuffleDep.shuffleId)) {  // 如果这个 shuffle dependey 没有建立 stage
+            ancestors.push(shuffleDep)    // 放入集合
+            waitingForVisit.push(shuffleDep.rdd)  // 用户遍历这个shuffle depencey 的上游 shuffle dependency
           } // Otherwise, the dependency and its ancestors have already been registered.
         }
       }

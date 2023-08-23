@@ -63,7 +63,7 @@ import org.apache.spark.util.random.{BernoulliCellSampler, BernoulliSampler, Poi
  *
  *  Spark中的所有调度和执行都基于这些方法进行，允许每个RDD实现自己的计算方式
  *  实际上，用户可以通过覆盖这些函数来实现自定义RDD（例如，用于从新的存储系统读取数据）
- *  有关RDD内部详细信息，请参阅<a href="http://people.csail.mit.edu/matei/papers/2012/nsdi_spark.pdf">Spark论文</a>
+ *  有关RDD内部详细信息，请参阅 <a href="http://people.csail.mit.edu/matei/papers/2012/nsdi_spark.pdf">Spark论文</a>
  *
  * @param _sc
  * @param deps

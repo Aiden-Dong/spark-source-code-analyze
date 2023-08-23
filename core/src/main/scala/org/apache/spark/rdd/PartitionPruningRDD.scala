@@ -29,8 +29,8 @@ private[spark] class PartitionPruningRDDPartition(idx: Int, val parentSplit: Par
 
 
 /**
- * Represents a dependency between the PartitionPruningRDD and its parent. In this
- * case, the child RDD contains a subset of partitions of the parents'.
+ * 表示PartitionPruningRDD与其父RDD之间的依赖关系
+ * 在这种情况下，子RDD包含了父RDD的一部分分区。
  */
 private[spark] class PruneDependency[T](rdd: RDD[T], partitionFilterFunc: Int => Boolean)
   extends NarrowDependency[T](rdd) {
@@ -48,10 +48,9 @@ private[spark] class PruneDependency[T](rdd: RDD[T], partitionFilterFunc: Int =>
 
 /**
  * :: DeveloperApi ::
- * An RDD used to prune RDD partitions/partitions so we can avoid launching tasks on
- * all partitions. An example use case: If we know the RDD is partitioned by range,
- * and the execution DAG has a filter on the key, we can avoid launching tasks
- * on partitions that don't have the range covering the key.
+ * 用于修剪RDD分区/分区的RDD，以便我们可以避免在所有分区上启动任务。
+ * 示例用例：如果我们知道RDD是按范围分区的，并且执行的DAG对键进行了筛选，
+ * 我们可以避免在没有覆盖键的范围的分区上启动任务。
  */
 @DeveloperApi
 class PartitionPruningRDD[T: ClassTag](
