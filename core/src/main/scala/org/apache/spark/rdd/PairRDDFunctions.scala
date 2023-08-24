@@ -69,12 +69,13 @@ class PairRDDFunctions[K, V](self: RDD[(K, V)])
    */
   @Experimental
   def combineByKeyWithClassTag[C](
-      createCombiner: V => C,
-      mergeValue: (C, V) => C,
-      mergeCombiners: (C, C) => C,
-      partitioner: Partitioner,
-      mapSideCombine: Boolean = true,  // 是否进行 MapCombine 操作
+      createCombiner: V => C,               // Combine 初始化
+      mergeValue: (C, V) => C,              // Combine 内部数据合并
+      mergeCombiners: (C, C) => C,          // Combine 之间的数据合并
+      partitioner: Partitioner,             // 分区器
+      mapSideCombine: Boolean = true,       // 是否进行 MapCombine 操作
       serializer: Serializer = null)(implicit ct: ClassTag[C]): RDD[(K, C)] = self.withScope {
+
     require(mergeCombiners != null, "mergeCombiners must be defined") // required as of Spark 0.9.0
     if (keyClass.isArray) {
       if (mapSideCombine) {
@@ -84,16 +85,20 @@ class PairRDDFunctions[K, V](self: RDD[(K, V)])
         throw new SparkException("HashPartitioner cannot partition array keys.")
       }
     }
+    // 用于聚合操作的算子类
     val aggregator = new Aggregator[K, V, C](
       self.context.clean(createCombiner),
       self.context.clean(mergeValue),
       self.context.clean(mergeCombiners))
+
+    // 表示不改变分区结构，只做combine操作
     if (self.partitioner == Some(partitioner)) {
       self.mapPartitions(iter => {
         val context = TaskContext.get()
-        new InterruptibleIterator(context, aggregator.combineValuesByKey(iter, context))
+        new InterruptibleIterator(context, aggregator.combineValuesByKey(iter, context))  /
       }, preservesPartitioning = true)
     } else {
+      // 跨shuffle的聚合操作
       new ShuffledRDD[K, V, C](self, partitioner)
         .setSerializer(serializer)
         .setAggregator(aggregator)
@@ -496,12 +501,11 @@ class PairRDDFunctions[K, V](self: RDD[(K, V)])
    * key in memory. If a key has too many values, it can result in an `OutOfMemoryError`.
    */
   def groupByKey(partitioner: Partitioner): RDD[(K, Iterable[V])] = self.withScope {
-    // groupByKey shouldn't use map side combine because map side combine does not
-    // reduce the amount of data shuffled and requires all map side data be inserted
-    // into a hash table, leading to more objects in the old gen.
-    val createCombiner = (v: V) => CompactBuffer(v)
-    val mergeValue = (buf: CompactBuffer[V], v: V) => buf += v
-    val mergeCombiners = (c1: CompactBuffer[V], c2: CompactBuffer[V]) => c1 ++= c2
+    // groupByKey 不应使用reduce端合并，因为reduce端合并不能减少shufle的数据量
+    // 并且需要将所有reduce端数据插入hash表，导致老年代中的对象增多。
+    val createCombiner = (v: V) => CompactBuffer(v)                                  // 初始化compine空集
+    val mergeValue = (buf: CompactBuffer[V], v: V) => buf += v                       // combine 内部处理处理方式
+    val mergeCombiners = (c1: CompactBuffer[V], c2: CompactBuffer[V]) => c1 ++= c2   // combine 之间的数据处理方式
     val bufs = combineByKeyWithClassTag[CompactBuffer[V]](
       createCombiner, mergeValue, mergeCombiners, partitioner, mapSideCombine = false)
     bufs.asInstanceOf[RDD[(K, Iterable[V])]]

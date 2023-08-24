@@ -65,8 +65,8 @@ abstract class NarrowDependency[T](_rdd: RDD[T]) extends Dependency[T] {
  */
 @DeveloperApi
 class ShuffleDependency[K: ClassTag, V: ClassTag, C: ClassTag](
-    @transient private val _rdd: RDD[_ <: Product2[K, V]],
-    val partitioner: Partitioner,
+    @transient private val _rdd: RDD[_ <: Product2[K, V]],     // 上游的RDD
+    val partitioner: Partitioner,                              // 上游RDD算完后的分区方式
     val serializer: Serializer = SparkEnv.get.serializer,
     val keyOrdering: Option[Ordering[K]] = None,
     val aggregator: Option[Aggregator[K, V, C]] = None,

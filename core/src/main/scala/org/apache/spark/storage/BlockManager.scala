@@ -148,9 +148,11 @@ private[spark] class BlockManager(
   private val futureExecutionContext = ExecutionContext.fromExecutorService(
     ThreadUtils.newDaemonCachedThreadPool("block-manager-future", 128))
 
-  // Actual storage of where blocks are kept
+  // 块的内存存储单元
   private[spark] val memoryStore =
     new MemoryStore(conf, blockInfoManager, serializerManager, memoryManager, this)
+
+  // 块的磁盘存储单元
   private[spark] val diskStore = new DiskStore(conf, diskBlockManager, securityManager)
   memoryManager.setMemoryStore(memoryStore)
 
@@ -867,8 +869,8 @@ private[spark] class BlockManager(
       level: StorageLevel,
       classTag: ClassTag[T],
       makeIterator: () => Iterator[T]): Either[BlockResult, Iterator[T]] = {
-    // Attempt to read the block from local or remote storage. If it's present, then we don't need
-    // to go through the local-get-or-put path.
+    // 尝试从本地或远程存储读取块。
+    // 如果已经被缓存则直接返回
     get[T](blockId)(classTag) match {
       case Some(block) =>
         return Left(block)
@@ -878,8 +880,7 @@ private[spark] class BlockManager(
     // Initially we hold no locks on this block.
     doPutIterator(blockId, makeIterator, level, classTag, keepReadLock = true) match {
       case None =>
-        // doPut() didn't hand work back to us, so the block already existed or was successfully
-        // stored. Therefore, we now hold a read lock on the block.
+        // 表示数据缓存成功
         val blockResult = getLocalValues(blockId).getOrElse {
           // Since we held a read lock between the doPut() and get() calls, the block should not
           // have been evicted, so get() not returning the block indicates some internal error.
@@ -892,9 +893,8 @@ private[spark] class BlockManager(
         releaseLock(blockId)
         Left(blockResult)
       case Some(iter) =>
-        // The put failed, likely because the data was too large to fit in memory and could not be
-        // dropped to disk. Therefore, we need to pass the input iterator back to the caller so
-        // that they can decide what to do with the values (e.g. process them without caching).
+        // 放置操作失败，可能是因为数据太大，无法放入内存并且无法写入磁盘。
+        // 因此，我们需要将输入迭代器传递回调用者，让他们决定如何处理这些值（例如，在不缓存的情况下处理这些值）。
        Right(iter)
     }
   }
@@ -1132,8 +1132,8 @@ private[spark] class BlockManager(
   }
 
   /**
-   * Put the given block according to the given level in one of the block stores, replicating
-   * the values if necessary.
+   * Put the given block according to the given level in one of the block stores,
+   * replicating the values if necessary.
    *
    * If the block already exists, this method will not overwrite it.
    *
@@ -1150,20 +1150,25 @@ private[spark] class BlockManager(
       classTag: ClassTag[T],
       tellMaster: Boolean = true,
       keepReadLock: Boolean = false): Option[PartiallyUnrolledIterator[T]] = {
+
     doPut(blockId, level, classTag, tellMaster = tellMaster, keepReadLock = keepReadLock) { info =>
       val startTimeMs = System.currentTimeMillis
       var iteratorFromFailedMemoryStorePut: Option[PartiallyUnrolledIterator[T]] = None
       // Size of the block in bytes
       var size = 0L
       if (level.useMemory) {
+        // 使用内存存储
         // Put it in memory first, even if it also has useDisk set to true;
         // We will drop it to disk later if the memory store can't hold it.
         if (level.deserialized) {
+          // 如果是支持序列化的
+
           memoryStore.putIteratorAsValues(blockId, iterator(), classTag) match {
             case Right(s) =>
+              // 表示已经成功放置到内存
               size = s
             case Left(iter) =>
-              // Not enough space to unroll this block; drop to disk if applicable
+              // 如果支持磁盘存储，则打开序列化器，将数据写到磁盘上去
               if (level.useDisk) {
                 logWarning(s"Persisting block $blockId to disk instead.")
                 diskStore.put(blockId) { channel =>
@@ -1172,6 +1177,7 @@ private[spark] class BlockManager(
                 }
                 size = diskStore.getSize(blockId)
               } else {
+                // 表示放入内存失败
                 iteratorFromFailedMemoryStorePut = Some(iter)
               }
           }

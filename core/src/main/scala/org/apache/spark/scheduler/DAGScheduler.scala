@@ -309,6 +309,7 @@ private[spark] class DAGScheduler(
   private[scheduler]
   def getCacheLocs(rdd: RDD[_]): IndexedSeq[Seq[TaskLocation]] = cacheLocs.synchronized {
     // Note: this doesn't use `getOrElse()` because this method is called O(num tasks) times
+    // 如果不存在cache中
     if (!cacheLocs.contains(rdd.id)) {
       // Note: if the storage level is NONE, we don't need to get locations from block manager.
       val locs: IndexedSeq[Seq[TaskLocation]] = if (rdd.getStorageLevel == StorageLevel.NONE) {
@@ -330,9 +331,7 @@ private[spark] class DAGScheduler(
   }
 
   /**
-   * Gets a shuffle map stage if one exists in shuffleIdToMapStage. Otherwise, if the
-   * shuffle map stage doesn't already exist, this method will create the shuffle map stage in
-   * addition to any missing ancestor shuffle map stages.
+   * 该方法将创建shuffleMapStage，并创建任何缺失的祖先ShuffleMapStage。
    */
   private def getOrCreateShuffleMapStage(
       shuffleDep: ShuffleDependency[_, _, _],
@@ -346,11 +345,6 @@ private[spark] class DAGScheduler(
       case None =>
         // 为所有缺失的祖先Shuffle依赖项创建阶段。
         getMissingAncestorShuffleDependencies(shuffleDep.rdd).foreach { dep =>
-          // 尽管 getMissingAncestorShuffleDependencies 仅返回那些尚未在 shuffleIdToMapStage 中的Shuffle依赖项，
-          // 但在进入 foreach 循环处理特定依赖项时，由于先前依赖项的阶段创建过程，
-          // 有可能它已经被添加到了 shuffleIdToMapStage 中。
-          // 有关更多信息，请参见 SPARK-13902。
-          // 表示如果这个dependency 没有被建立 stage, 则给其创建stage
           if (!shuffleIdToMapStage.contains(dep.shuffleId)) {
             createShuffleMapStage(dep, firstJobId)
           }
@@ -437,7 +431,7 @@ private[spark] class DAGScheduler(
   }
 
   /**
-   * Create a ResultStage associated with the provided jobId.
+   * 基于目标RDD创建ResultStage.
    */
   private def createResultStage(
       rdd: RDD[_],
@@ -499,7 +493,6 @@ private[spark] class DAGScheduler(
 
   /**
    * 基于当前的RDD 进行深度有先遍历，找到这个RDD 的所有直接的 ShuffleDependency
-   *
    *       |   <-   NarrowDependency[RDD] <- ShuffleDependency[RDD]  [切断]|  <- NarrowDependency[RDD] ...
    * RootRDD
    *       |   <-    ShuffleDependency[RDD]  [切断]|  <- NarrowDependency[RDD] ...
@@ -562,10 +555,14 @@ private[spark] class DAGScheduler(
     // caused by recursively visiting
     val waitingForVisit = new ArrayStack[RDD[_]]
     def visit(rdd: RDD[_]) {
+
       if (!visited(rdd)) {
         visited += rdd
+
         val rddHasUncachedPartitions = getCacheLocs(rdd).contains(Nil)
+
         if (rddHasUncachedPartitions) {
+
           for (dep <- rdd.dependencies) {
             dep match {
               case shufDep: ShuffleDependency[_, _, _] =>
@@ -1079,8 +1076,10 @@ private[spark] class DAGScheduler(
     val jobId = activeJobForStage(stage)
     if (jobId.isDefined) {
       logDebug("submitStage(" + stage + ")")
+      // 首先判断这个stage 没有被执行
       if (!waitingStages(stage) && !runningStages(stage) && !failedStages(stage)) {
         val missing = getMissingParentStages(stage).sortBy(_.id)
+
         logDebug("missing: " + missing)
         if (missing.isEmpty) {
           logInfo("Submitting " + stage + " (" + stage.rdd + "), which has no missing parents")

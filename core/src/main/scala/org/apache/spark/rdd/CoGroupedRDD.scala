@@ -58,7 +58,8 @@ private[spark] case class NarrowCoGroupSplitDep(
  *                   narrowDeps should always be equal to the number of parents.
  */
 private[spark] class CoGroupPartition(
-    override val index: Int, val narrowDeps: Array[Option[NarrowCoGroupSplitDep]])
+    override val index: Int,   // 当前 Partition 的索引号
+    val narrowDeps: Array[Option[NarrowCoGroupSplitDep]]) // 当前 parition 对应的RDD依赖集合
   extends Partition with Serializable {
   override def hashCode(): Int = index
   override def equals(other: Any): Boolean = super.equals(other)
@@ -69,6 +70,8 @@ private[spark] class CoGroupPartition(
  * An RDD that cogroups its parents. For each key k in parent RDDs, the resulting RDD contains a
  * tuple with the list of values for that key.
  *
+ * 用于多个RDD关联的场景
+ *
  * @param rdds parent RDDs.
  * @param part partitioner used to partition the shuffle output
  *
@@ -77,8 +80,8 @@ private[spark] class CoGroupPartition(
  */
 @DeveloperApi
 class CoGroupedRDD[K: ClassTag](
-    @transient var rdds: Seq[RDD[_ <: Product2[K, _]]],
-    part: Partitioner)
+    @transient var rdds: Seq[RDD[_ <: Product2[K, _]]],   // 依赖的上游的多个RDD
+    part: Partitioner)                                    // 分区类实现
   extends RDD[(K, Array[Iterable[_]])](rdds.head.context, Nil) {
 
   // For example, `(k, a) cogroup (k, b)` produces k -> Array(ArrayBuffer as, ArrayBuffer bs).
@@ -96,30 +99,31 @@ class CoGroupedRDD[K: ClassTag](
     this
   }
 
+  // 自定义实现的来自多个上游的依赖关系
   override def getDependencies: Seq[Dependency[_]] = {
+
     rdds.map { rdd: RDD[_] =>
       if (rdd.partitioner == Some(part)) {
+        // BroadCast 场景可见
         logDebug("Adding one-to-one dependency with " + rdd)
         new OneToOneDependency(rdd)
       } else {
         logDebug("Adding shuffle dependency with " + rdd)
-        new ShuffleDependency[K, Any, CoGroupCombiner](
-          rdd.asInstanceOf[RDD[_ <: Product2[K, _]]], part, serializer)
+        new ShuffleDependency[K, Any, CoGroupCombiner](rdd.asInstanceOf[RDD[_ <: Product2[K, _]]], part, serializer)
       }
     }
   }
 
+  // 自定义 分区实现
   override def getPartitions: Array[Partition] = {
     val array = new Array[Partition](part.numPartitions)
+
     for (i <- 0 until array.length) {
-      // Each CoGroupPartition will have a dependency per contributing RDD
+      // 当前RDD的每个分区分别依赖与上游所有RDD的对应的分区位置
       array(i) = new CoGroupPartition(i, rdds.zipWithIndex.map { case (rdd, j) =>
-        // Assume each RDD contributed a single dependency, and get it
         dependencies(j) match {
-          case s: ShuffleDependency[_, _, _] =>
-            None
-          case _ =>
-            Some(new NarrowCoGroupSplitDep(rdd, i, rdd.partitions(i)))
+          case s: ShuffleDependency[_, _, _] => None
+          case _ => Some(new NarrowCoGroupSplitDep(rdd, i, rdd.partitions(i)))
         }
       }.toArray)
     }
@@ -128,21 +132,31 @@ class CoGroupedRDD[K: ClassTag](
 
   override val partitioner: Some[Partitioner] = Some(part)
 
+  /***
+   * 关联计算当前分去集的数据
+   * @param s 计算的分区号
+   * @param context 任务上下文
+   */
   override def compute(s: Partition, context: TaskContext): Iterator[(K, Array[Iterable[_]])] = {
     val split = s.asInstanceOf[CoGroupPartition]
     val numRdds = dependencies.length
 
     // A list of (rdd iterator, dependency number) pairs
     val rddIterators = new ArrayBuffer[(Iterator[Product2[K, Any]], Int)]
+
+    // 遍历所有的依赖
     for ((dep, depNum) <- dependencies.zipWithIndex) dep match {
+        // 如果是 OneToOne的分区依赖情况下
       case oneToOneDependency: OneToOneDependency[Product2[K, Any]] @unchecked =>
+        // 获取当前分区的依赖信息
         val dependencyPartition = split.narrowDeps(depNum).get.split
-        // Read them from the parent
+
+        // 直接遍历获取到Iterator
         val it = oneToOneDependency.rdd.iterator(dependencyPartition, context)
         rddIterators += ((it, depNum))
 
       case shuffleDependency: ShuffleDependency[_, _, _] =>
-        // Read map outputs of shuffle
+        // 如果是ShuffleDependency 情况下， 直接从ShuffleManager中读取
         val it = SparkEnv.get.shuffleManager
           .getReader(shuffleDependency.shuffleHandle, split.index, split.index + 1, context)
           .read()
@@ -150,9 +164,11 @@ class CoGroupedRDD[K: ClassTag](
     }
 
     val map = createExternalMap(numRdds)
+    // 合并两个依赖
     for ((it, depNum) <- rddIterators) {
       map.insertAll(it.map(pair => (pair._1, new CoGroupValue(pair._2, depNum))))
     }
+
     context.taskMetrics().incMemoryBytesSpilled(map.memoryBytesSpilled)
     context.taskMetrics().incDiskBytesSpilled(map.diskBytesSpilled)
     context.taskMetrics().incPeakExecutionMemory(map.peakMemoryUsedBytes)

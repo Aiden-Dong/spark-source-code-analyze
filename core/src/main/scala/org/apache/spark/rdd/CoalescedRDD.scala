@@ -63,14 +63,13 @@ private[spark] case class CoalescedRDDPartition(
 }
 
 /**
- * Represents a coalesced RDD that has fewer partitions than its parent RDD
- * This class uses the PartitionCoalescer class to find a good partitioning of the parent RDD
- * so that each new partition has roughly the same number of parent partitions and that
- * the preferred location of each new partition overlaps with as many preferred locations of its
- * parent partitions
- * @param prev RDD to be coalesced
- * @param maxPartitions number of desired partitions in the coalesced RDD (must be positive)
- * @param partitionCoalescer [[PartitionCoalescer]] implementation to use for coalescing
+ * 表示一个分区较少的合并RDD，其分区数少于其父RDD。
+ * 该类使用PartitionCoalescer类来找到父RDD的良好分区方式，以便每个新分区大致具有相同数量的父分区，
+ * 并且每个新分区的首选位置与其父分区的尽可能多的首选位置重叠。
+ *
+ * @param prev RDD 用于重分区的RDD
+ * @param maxPartitions 分区后的最大分区数量
+ * @param partitionCoalescer [[PartitionCoalescer]] 用于合并分区的实现方式
  */
 private[spark] class CoalescedRDD[T: ClassTag](
     @transient var prev: RDD[T],
@@ -80,22 +79,27 @@ private[spark] class CoalescedRDD[T: ClassTag](
 
   require(maxPartitions > 0 || maxPartitions == prev.partitions.length,
     s"Number of partitions ($maxPartitions) must be positive.")
+
   if (partitionCoalescer.isDefined) {
     require(partitionCoalescer.get.isInstanceOf[Serializable],
       "The partition coalescer passed in must be serializable.")
   }
 
+  // 定义分区
   override def getPartitions: Array[Partition] = {
+    // 创建一个默认的分区实现器
     val pc = partitionCoalescer.getOrElse(new DefaultPartitionCoalescer())
 
     pc.coalesce(maxPartitions, prev).zipWithIndex.map {
       case (pg, i) =>
+        // 拿到计算后的每个分区组
         val ids = pg.partitions.map(_.index).toArray
         new CoalescedRDDPartition(i, prev, ids, pg.prefLoc)
     }
   }
 
   override def compute(partition: Partition, context: TaskContext): Iterator[T] = {
+    // 当前分区来自多个上游分区数据
     partition.asInstanceOf[CoalescedRDDPartition].parents.iterator.flatMap { parentPartition =>
       firstParent[T].iterator(parentPartition, context)
     }
@@ -103,8 +107,10 @@ private[spark] class CoalescedRDD[T: ClassTag](
 
   override def getDependencies: Seq[Dependency[_]] = {
     Seq(new NarrowDependency(prev) {
-      def getParents(id: Int): Seq[Int] =
+      def getParents(id: Int): Seq[Int] = {
+        // 基于当前分区号获取到多个上游分区依赖号
         partitions(id).asInstanceOf[CoalescedRDDPartition].parentsIndices
+      }
     })
   }
 
@@ -388,6 +394,7 @@ private class DefaultPartitionCoalescer(val balanceSlack: Double = 0.10)
     * @return array of partition groups
    */
   def coalesce(maxPartitions: Int, prev: RDD[_]): Array[PartitionGroup] = {
+    // 标记每个分区的本地位置
     val partitionLocs = new PartitionLocations(prev)
     // setup the groups (bins)
     setupGroups(math.min(prev.partitions.length, maxPartitions), partitionLocs)

@@ -78,8 +78,7 @@ object Partitioner {
       rdds.map(_.partitions.length).max
     }
 
-    // If the existing max partitioner is an eligible one, or its partitions number is larger
-    // than the default number of partitions, use the existing partitioner.
+    // 如果现有的最大分区器是合适的分区器，或者其分区数大于默认分区数，则使用现有的分区器。
     if (hasMaxPartitioner.nonEmpty && (isEligiblePartitioner(hasMaxPartitioner.get, rdds) ||
         defaultNumPartitions < hasMaxPartitioner.get.getNumPartitions)) {
       hasMaxPartitioner.get.partitioner.get

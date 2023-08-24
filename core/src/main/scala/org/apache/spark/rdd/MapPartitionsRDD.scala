@@ -37,10 +37,10 @@ import org.apache.spark.{Partition, TaskContext}
  *                         is changed. Mostly stateful functions are order-sensitive.
  */
 private[spark] class MapPartitionsRDD[U: ClassTag, T: ClassTag](
-    var prev: RDD[T],
-    f: (TaskContext, Int, Iterator[T]) => Iterator[U],  // (TaskContext, partition index, iterator)
-    preservesPartitioning: Boolean = false,
-    isFromBarrier: Boolean = false,
+    var prev: RDD[T],                                   // 上游依赖RDD
+    f: (TaskContext, Int, Iterator[T]) => Iterator[U],  // 转换算子
+    preservesPartitioning: Boolean = false,             // 保留分区
+    isFromBarrier: Boolean = false,                     //
     isOrderSensitive: Boolean = false)
   extends RDD[U](prev) {
 

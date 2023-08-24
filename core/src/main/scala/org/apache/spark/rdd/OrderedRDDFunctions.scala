@@ -57,8 +57,7 @@ class OrderedRDDFunctions[K : Ordering : ClassTag,
    */
   // TODO: this currently doesn't work on P other than Tuple2!
   def sortByKey(ascending: Boolean = true, numPartitions: Int = self.partitions.length)
-      : RDD[(K, V)] = self.withScope
-  {
+      : RDD[(K, V)] = self.withScope {
     val part = new RangePartitioner(numPartitions, self, ascending)
     new ShuffledRDD[K, V, V](self, part)
       .setKeyOrdering(if (ascending) ordering else ordering.reverse)

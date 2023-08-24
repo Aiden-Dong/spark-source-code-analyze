@@ -42,10 +42,10 @@ private[spark] abstract class RDDCheckpointData[T: ClassTag](@transient private 
 
   import CheckpointState._
 
-  // The checkpoint state of the associated RDD.
+  // checkpoint 的完成状态.
   protected var cpState = Initialized
 
-  // The RDD that contains our checkpointed data
+  // 包含目标checkpoint 数据的RDD
   private var cpRDD: Option[CheckpointRDD[T]] = None
 
   // TODO: are we sure we need to use a global lock in the following methods?
@@ -78,6 +78,7 @@ private[spark] abstract class RDDCheckpointData[T: ClassTag](@transient private 
     RDDCheckpointData.synchronized {
       cpRDD = Some(newRDD)
       cpState = Checkpointed
+      // 表示数据已经被checkpoint -- 切断上游依赖等
       rdd.markCheckpointed()
     }
   }

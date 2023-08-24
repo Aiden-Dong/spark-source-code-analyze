@@ -63,16 +63,24 @@ object UnionRDD {
     new ForkJoinTaskSupport(new ForkJoinPool(8))
 }
 
+/***
+ * 用于 多个RDD Union 场景
+ * @param sc
+ * @param rdds
+ * @param classTag$T$0
+ * @tparam T
+ */
 @DeveloperApi
 class UnionRDD[T: ClassTag](
-    sc: SparkContext,
-    var rdds: Seq[RDD[T]])
-  extends RDD[T](sc, Nil) {  // Nil since we implement getDependencies
+    sc: SparkContext,            //
+    var rdds: Seq[RDD[T]])       // 上游依赖的 RDD 数据集
+  extends RDD[T](sc, Nil) {      // Nil since we implement getDependencies
 
   // visible for testing
   private[spark] val isPartitionListingParallel: Boolean =
     rdds.length > conf.getInt("spark.rdd.parallelListingThreshold", 10)
 
+  // Partition 来数字上游所有RDD的分区总和
   override def getPartitions: Array[Partition] = {
     val parRDDs = if (isPartitionListingParallel) {
       val parArray = rdds.par
@@ -90,6 +98,7 @@ class UnionRDD[T: ClassTag](
     array
   }
 
+
   override def getDependencies: Seq[Dependency[_]] = {
     val deps = new ArrayBuffer[Dependency[_]]
     var pos = 0
@@ -102,6 +111,7 @@ class UnionRDD[T: ClassTag](
 
   override def compute(s: Partition, context: TaskContext): Iterator[T] = {
     val part = s.asInstanceOf[UnionPartition[T]]
+    // 定位到上游 RDD 的对应分区数据迭代
     parent[T](part.parentRddIndex).iterator(part.parentPartition, context)
   }
 

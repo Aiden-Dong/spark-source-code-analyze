@@ -162,13 +162,12 @@ private[spark] class MemoryStore(
   }
 
   /**
-   * Attempt to put the given block in memory store as values or bytes.
+   * 尝试将给定的block作为值或字节放入内存存储中。
    *
-   * It's possible that the iterator is too large to materialize and store in memory. To avoid
-   * OOM exceptions, this method will gradually unroll the iterator while periodically checking
-   * whether there is enough free memory. If the block is successfully materialized, then the
-   * temporary unroll memory used during the materialization is "transferred" to storage memory,
-   * so we won't acquire more memory than is actually needed to store the block.
+   * Iterator的内容可能太大，无法在内存中实体化和存储。
+   * 为了避免出现OOM异常，此方法将逐步展开Iterator，同时定期检查是否有足够的空闲内存。
+   * 如果成功地实体化了block，那么在实体化过程中使用的临时展开内存将“转移到”存储内存，
+   * 这样我们不会获得比实际存储块所需的内存更多的内存。
    *
    * @param blockId The block id.
    * @param values The values which need be stored.
@@ -190,24 +189,23 @@ private[spark] class MemoryStore(
       valuesHolder: ValuesHolder[T]): Either[Long, Long] = {
     require(!contains(blockId), s"Block $blockId is already present in the MemoryStore")
 
-    // Number of elements unrolled so far
+    // 到目前为止展开的元素数量。
     var elementsUnrolled = 0
-    // Whether there is still enough memory for us to continue unrolling this block
+    // 是否仍然有足够的内存来继续展开Block。
     var keepUnrolling = true
-    // Initial per-task memory to request for unrolling blocks (bytes).
+    // 用于展开block的每个task初始内存请求量（字节）。
     val initialMemoryThreshold = unrollMemoryThreshold
-    // How often to check whether we need to request more memory
+    // 检查是否需要请求更多内存的频率。
     val memoryCheckPeriod = conf.get(UNROLL_MEMORY_CHECK_PERIOD)
-    // Memory currently reserved by this task for this particular unrolling operation
+    // 当前由该任务为此特定展开操作保留的内存
     var memoryThreshold = initialMemoryThreshold
-    // Memory to request as a multiple of current vector size
+    // 作为当前vertor大小的倍数请求的内存量
     val memoryGrowthFactor = conf.get(UNROLL_MEMORY_GROWTH_FACTOR)
-    // Keep track of unroll memory used by this particular block / putIterator() operation
+    // 跟踪由此特定操作（block / putIterator()）使用的展开内存。
     var unrollMemoryUsedByThisBlock = 0L
 
-    // Request enough memory to begin unrolling
-    keepUnrolling =
-      reserveUnrollMemoryForThisTask(blockId, initialMemoryThreshold, memoryMode)
+    // 请求足够的内存开始此操作
+    keepUnrolling = reserveUnrollMemoryForThisTask(blockId, initialMemoryThreshold, memoryMode)
 
     if (!keepUnrolling) {
       logWarning(s"Failed to reserve initial memory threshold of " +
@@ -219,13 +217,13 @@ private[spark] class MemoryStore(
     // Unroll this block safely, checking whether we have exceeded our threshold periodically
     while (values.hasNext && keepUnrolling) {
       valuesHolder.storeValue(values.next())
+      // 进行内存检查
       if (elementsUnrolled % memoryCheckPeriod == 0) {
         val currentSize = valuesHolder.estimatedSize()
-        // If our vector's size has exceeded the threshold, request more memory
+        // vector 占资源过大， 需要增加分配
         if (currentSize >= memoryThreshold) {
           val amountToRequest = (currentSize * memoryGrowthFactor - memoryThreshold).toLong
-          keepUnrolling =
-            reserveUnrollMemoryForThisTask(blockId, amountToRequest, memoryMode)
+          keepUnrolling = reserveUnrollMemoryForThisTask(blockId, amountToRequest, memoryMode)
           if (keepUnrolling) {
             unrollMemoryUsedByThisBlock += amountToRequest
           }
@@ -293,10 +291,14 @@ private[spark] class MemoryStore(
       values: Iterator[T],
       classTag: ClassTag[T]): Either[PartiallyUnrolledIterator[T], Long] = {
 
+    // 内存对象的存储类
     val valuesHolder = new DeserializedValuesHolder[T](classTag)
 
     putIterator(blockId, values, classTag, MemoryMode.ON_HEAP, valuesHolder) match {
+      // 表示数据落地到内存
       case Right(storedSize) => Right(storedSize)
+
+        // 没有足够的内存缓存
       case Left(unrollMemoryUsedByThisBlock) =>
         val unrolledIterator = if (valuesHolder.vector != null) {
           valuesHolder.vector.iterator
@@ -653,17 +655,18 @@ private trait ValuesHolder[T] {
 }
 
 /**
- * A holder for storing the deserialized values.
+ * 内存Cache 是使用一个Vector对象来防止
  */
 private class DeserializedValuesHolder[T] (classTag: ClassTag[T]) extends ValuesHolder[T] {
-  // Underlying vector for unrolling the block
   var vector = new SizeTrackingVector[T]()(classTag)
   var arrayValues: Array[T] = null
 
+  // 放置对象到内存中
   override def storeValue(value: T): Unit = {
     vector += value
   }
 
+  // 记录当前数据的长度
   override def estimatedSize(): Long = {
     vector.estimateSize()
   }

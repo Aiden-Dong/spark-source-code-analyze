@@ -18,19 +18,16 @@
 package org.apache.spark.rdd
 
 import java.util.Random
-
-import scala.collection.{mutable, Map}
+import scala.collection.{Map, mutable}
 import scala.collection.mutable.ArrayBuffer
 import scala.io.Codec
 import scala.language.implicitConversions
-import scala.reflect.{classTag, ClassTag}
+import scala.reflect.{ClassTag, classTag}
 import scala.util.hashing
-
 import com.clearspring.analytics.stream.cardinality.HyperLogLogPlus
 import org.apache.hadoop.io.{BytesWritable, NullWritable, Text}
 import org.apache.hadoop.io.compress.CompressionCodec
 import org.apache.hadoop.mapred.TextOutputFormat
-
 import org.apache.spark._
 import org.apache.spark.Partitioner._
 import org.apache.spark.annotation.{DeveloperApi, Experimental, Since}
@@ -43,8 +40,9 @@ import org.apache.spark.partial.PartialResult
 import org.apache.spark.storage.{RDDBlockId, StorageLevel}
 import org.apache.spark.util.{BoundedPriorityQueue, Utils}
 import org.apache.spark.util.collection.{OpenHashMap, Utils => collectionUtils}
-import org.apache.spark.util.random.{BernoulliCellSampler, BernoulliSampler, PoissonSampler,
-  SamplingUtils}
+import org.apache.spark.util.random.{BernoulliCellSampler, BernoulliSampler, PoissonSampler, SamplingUtils}
+
+import java.nio.file.FileSystem
 
 /***
  * 弹性分布式数据集 [[RDD]] 是Spark中的基本抽象。表示一个不可变的、分区的元素集合，可以并行操作。
@@ -128,12 +126,10 @@ abstract class RDD[T: ClassTag](
 
 
 
-  /**
-   * 可选地由子类覆盖，以指定位置偏好。.
-   */
+  // 可选地由子类覆盖，以指定当前Partition的位置偏好
   protected def getPreferredLocations(split: Partition): Seq[String] = Nil
 
-  /** 可选地由子类覆盖，以指定它们的分区方式。. */
+  // 可选地由子类覆盖，以指定它们的分区方式
   @transient val partitioner: Option[Partitioner] = None
 
   // =======================================================================
@@ -207,10 +203,7 @@ abstract class RDD[T: ClassTag](
   def getStorageLevel: StorageLevel = storageLevel
 
 
-  /**
-   * 由子类实现以返回此RDD对父RDD的依赖关系。
-   * 该方法只会被调用一次，因此在其中实现耗时的计算是安全的。
-   */
+  // 返回构建过程中传递的RDD依赖关系
   protected def getDependencies: Seq[Dependency[_]] = deps
 
   // 我们的依赖关系和分区将通过调用下面子类的方法获得
@@ -218,13 +211,14 @@ abstract class RDD[T: ClassTag](
   private var dependencies_ : Seq[Dependency[_]] = _
   @transient private var partitions_ : Array[Partition] = _
 
-  /** 一个Option，保存我们的检查点RDD，如果我们被检查点了。 */
+
+  // CheckpointRDD
+  // 如果RDD已经被 checkpoint， 则此变量中存放目标checkpoint 数据
   private def checkpointRDD: Option[CheckpointRDD[T]] = checkpointData.flatMap(_.checkpointRDD)
 
-  /**
-   * 获取此RDD的依赖列表，考虑到RDD是否被检查点。
-   */
+  // 获取此RDD的依赖列表，要考虑此RDD是否被Checkpoint
   final def dependencies: Seq[Dependency[_]] = {
+    // 如果已经被 checkpoint 了， 则直接返回checkpointRDD
     checkpointRDD.map(r => List(new OneToOneDependency(r)))
       .getOrElse {
       if (dependencies_ == null) {
@@ -234,13 +228,11 @@ abstract class RDD[T: ClassTag](
     }
   }
 
-  /**
-   * 获取此RDD的分区数组，考虑到RDD是否被检查点。
-   */
+  // 获取此RDD的分区数组，考虑到RDD是否被checkpoint。
   final def partitions: Array[Partition] = {
     checkpointRDD.map(_.partitions).getOrElse {
       if (partitions_ == null) {
-        partitions_ = getPartitions
+        partitions_ = getPartitions   // 从具体RDD实现中获取分区列表
         partitions_.zipWithIndex.foreach { case (partition, index) =>
           require(partition.index == index,
             s"partitions($index).partition == ${partition.index}, but it should equal $index")
@@ -261,15 +253,21 @@ abstract class RDD[T: ClassTag](
     }
   }
 
-  /**
-   * 此RDD的内部方法
-   * 如果适用，将从缓存中读取，否则进行计算。
-   * 用户不应直接调用此方法，但对于实现自定义RDD子类的开发人员而言，此方法是可用的。
+  /***
+   * RDD 的算子转换执行方法
+   * 如果 RDD 已经被checkpoint, 则直接从checkpoint 中返回迭代器
+   * 否则 如果 RDD 已经被chche, 则直接从cache中返回迭代器
+   * 否则，则返回计算后的数据迭代器
+   * @param split  当前计算的 RDD partition
+   * @param context 任务上下文
+   * @return 结果数据迭代器
    */
   final def iterator(split: Partition, context: TaskContext): Iterator[T] = {
     if (storageLevel != StorageLevel.NONE) {
+    // 计算或直接从cache中读取数据
       getOrCompute(split, context)
     } else {
+      // 从 Checkpoint RDD 中直接取数, 或者是调用compute 计算RDD
       computeOrReadCheckpoint(split, context)
     }
   }
@@ -299,35 +297,42 @@ abstract class RDD[T: ClassTag](
     ancestors.filterNot(_ == this).toSeq
   }
 
-  /**
-   * Compute an RDD partition or read it from a checkpoint if the RDD is checkpointing.
+  /***
+   * 触发RDD的当前分区的计算转换行为，如果当前RDD位于Checkpoint 中，则直接从Checkpoint中读取数据
+   * 否则，基于依赖RDD做算子转换
+   * @param split 当前计算分区
+   * @param context 任务上下文
    */
-  private[spark] def computeOrReadCheckpoint(split: Partition, context: TaskContext): Iterator[T] =
-  {
+  private[spark] def computeOrReadCheckpoint(split: Partition, context: TaskContext): Iterator[T] = {
     // 判断是否在checkpoint 中
     if (isCheckpointedAndMaterialized) {
+      // 迭代上游RDD, 通过 dependency 定位 checkpoint
       firstParent[T].iterator(split, context)
     } else {
-      // 从上游触发计算
+      // 基于依赖RDD触发的 transform 算子计算转换
       compute(split, context)
     }
   }
 
   /**
-   * 获取或计算一个RDD分区。
-   * 在RDD被缓存时，由RDD.iterator()使用。
+   * 尝试从缓存中获取RDD
+   * 如果数据不在缓存中，尝试将数据放入缓存后再取出
+   * 需要注意的是如果内存资源不足以存储，可能会缓存失败，则直接返回原始迭代器
+   * @param partition 需要计算的分区
+   * @param context 任务上下文
+   * @return
    */
   private[spark] def getOrCompute(partition: Partition, context: TaskContext): Iterator[T] = {
     val blockId = RDDBlockId(id, partition.index)   // (RDDId, RDD_Partition_Id)
-
     var readCachedBlock = true
-    // 这个方法将在Executor 上被调用 executors, so we need call SparkEnv.get instead of sc.env.
+    // 从BlockManager 中读取
     SparkEnv.get.blockManager.getOrElseUpdate(blockId, storageLevel, elementClassTag, () => {
       readCachedBlock = false
       // 从Checkpoint中读取数据或者直接从上游读取数据
       computeOrReadCheckpoint(partition, context)
     }) match {
       case Left(blockResult) =>
+        // 表示数据缓存成功
         if (readCachedBlock) {
           val existingMetrics = context.taskMetrics().inputMetrics
           existingMetrics.incBytesRead(blockResult.bytes)
@@ -341,6 +346,7 @@ abstract class RDD[T: ClassTag](
           new InterruptibleIterator(context, blockResult.data.asInstanceOf[Iterator[T]])
         }
       case Right(iter) =>
+        // 数据缓存失败， 返回原迭代器
         new InterruptibleIterator(context, iter.asInstanceOf[Iterator[T]])
     }
   }
@@ -730,34 +736,17 @@ abstract class RDD[T: ClassTag](
       encoding)
   }
 
-  /**
-   * Return a new RDD by applying a function to each partition of this RDD.
-   *
-   * `preservesPartitioning` indicates whether the input function preserves the partitioner, which
-   * should be `false` unless this is a pair RDD and the input function doesn't modify the keys.
-   */
+  // mapPartitions 算子
   def mapPartitions[U: ClassTag](
       f: Iterator[T] => Iterator[U],
       preservesPartitioning: Boolean = false): RDD[U] = withScope {
     val cleanedF = sc.clean(f)
-    new MapPartitionsRDD(
-      this,
+    new MapPartitionsRDD(this,
       (context: TaskContext, index: Int, iter: Iterator[T]) => cleanedF(iter),
       preservesPartitioning)
   }
 
-  /**
-   * [performance] Spark's internal mapPartitionsWithIndex method that skips closure cleaning.
-   * It is a performance API to be used carefully only if we are sure that the RDD elements are
-   * serializable and don't require closure cleaning.
-   *
-   * @param preservesPartitioning indicates whether the input function preserves the partitioner,
-   *                              which should be `false` unless this is a pair RDD and the input
-   *                              function doesn't modify the keys.
-   * @param isOrderSensitive whether or not the function is order-sensitive. If it's order
-   *                         sensitive, it may return totally different result when the input order
-   *                         is changed. Mostly stateful functions are order-sensitive.
-   */
+  // mapPartitionsWithIndex 算子
   private[spark] def mapPartitionsWithIndexInternal[U: ClassTag](
       f: (Int, Iterator[T]) => Iterator[U],
       preservesPartitioning: Boolean = false,
@@ -781,13 +770,7 @@ abstract class RDD[T: ClassTag](
       preservesPartitioning)
   }
 
-  /**
-   * Return a new RDD by applying a function to each partition of this RDD, while tracking the index
-   * of the original partition.
-   *
-   * `preservesPartitioning` indicates whether the input function preserves the partitioner, which
-   * should be `false` unless this is a pair RDD and the input function doesn't modify the keys.
-   */
+  // mapPartitionsWithIndex 算子
   def mapPartitionsWithIndex[U: ClassTag](
       f: (Int, Iterator[T]) => Iterator[U],
       preservesPartitioning: Boolean = false): RDD[U] = withScope {
@@ -1491,12 +1474,11 @@ abstract class RDD[T: ClassTag](
    * memory, otherwise saving it on a file will require recomputation.
    */
   def checkpoint(): Unit = RDDCheckpointData.synchronized {
-    // NOTE: we use a global lock here due to complexities downstream with ensuring
-    // children RDD partitions point to the correct parent partitions. In the future
-    // we should revisit this consideration.
+    // 检查有没有配置 Checkpoint 目录
     if (context.checkpointDir.isEmpty) {
       throw new SparkException("Checkpoint directory has not been set in the SparkContext")
     } else if (checkpointData.isEmpty) {
+
       checkpointData = Some(new ReliableRDDCheckpointData(this))
     }
   }
@@ -1568,9 +1550,7 @@ abstract class RDD[T: ClassTag](
   def isCheckpointed: Boolean = isCheckpointedAndMaterialized
 
   /**
-   * Return whether this RDD is checkpointed and materialized, either reliably or locally.
-   * This is introduced as an alias for `isCheckpointed` to clarify the semantics of the
-   * return value. Exposed for testing.
+   * 表示 RDD 是否在checkpooint中，并且已经完成checkpoints
    */
   private[spark] def isCheckpointedAndMaterialized: Boolean =
     checkpointData.exists(_.isCheckpointed)
@@ -1709,6 +1689,7 @@ abstract class RDD[T: ClassTag](
             // checkpoint ourselves
             dependencies.foreach(_.rdd.doCheckpoint())
           }
+          // RDD 数据 落地 checkpoint
           checkpointData.get.checkpoint()
         } else {
           dependencies.foreach(_.rdd.doCheckpoint())
@@ -1728,10 +1709,7 @@ abstract class RDD[T: ClassTag](
   }
 
   /**
-   * Clears the dependencies of this RDD. This method must ensure that all references
-   * to the original parent RDDs are removed to enable the parent RDDs to be garbage
-   * collected. Subclasses of RDD may override this method for implementing their own cleaning
-   * logic. See [[org.apache.spark.rdd.UnionRDD]] for an example.
+   * 切断RDD依赖树，清空依赖关系
    */
   protected def clearDependencies(): Unit = {
     dependencies_ = null
