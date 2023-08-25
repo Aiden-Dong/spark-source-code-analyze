@@ -24,24 +24,23 @@ import org.apache.spark.rdd.RDD
 import org.apache.spark.util.CallSite
 
 /**
- * ShuffleMapStages are intermediate stages in the execution DAG that produce data for a shuffle.
- * They occur right before each shuffle operation, and might contain multiple pipelined operations
- * before that (e.g. map and filter). When executed, they save map output files that can later be
- * fetched by reduce tasks. The `shuffleDep` field describes the shuffle each stage is part of,
- * and variables like `outputLocs` and `numAvailableOutputs` track how many map outputs are ready.
+ * ShuffleMapStages 是执行 DAG 中产生用于Shuffle数据的中间阶段。
+ * 它们恰好出现在每次 shuffle 操作之前，可能在此之前包含多个流水线操作（例如map和filter）。
+* 在执行时，它们保存映射输出文件，稍后可以由 reduce 任务获取。shuffleDep 字段描述了每个阶段所属的洗牌操作，而诸如 outputLocs 和 numAvailableOutputs 之类的变量跟踪有多少映射输出已准备就绪。
+ShuffleMapStages 也可以作为作业通过 DAGScheduler.submitMapStage 独立提交。对于这种阶段，提交它们的 ActiveJobs 在 mapStageJobs 中被跟踪。请注意，可能会有多个 ActiveJobs 尝试计算相同的洗牌映射阶段。
  *
  * ShuffleMapStages can also be submitted independently as jobs with DAGScheduler.submitMapStage.
  * For such stages, the ActiveJobs that submitted them are tracked in `mapStageJobs`. Note that
  * there can be multiple ActiveJobs trying to compute the same shuffle map stage.
  */
 private[spark] class ShuffleMapStage(
-    id: Int,
-    rdd: RDD[_],
-    numTasks: Int,
-    parents: List[Stage],
-    firstJobId: Int,
-    callSite: CallSite,
-    val shuffleDep: ShuffleDependency[_, _, _],
+    id: Int,                // 表示当前 Stage 的 ID
+    rdd: RDD[_],            // 当前Shuffle操作的依赖RDD
+    numTasks: Int,          // 当前 Stage 的Task数量，为目标RDD的分区数
+    parents: List[Stage],   // 当前Stage 上游依赖的Stage
+    firstJobId: Int,        // 当前作业ID
+    callSite: CallSite,     //
+    val shuffleDep: ShuffleDependency[_, _, _],   // 当前依赖方式
     mapOutputTrackerMaster: MapOutputTrackerMaster)
   extends Stage(id, rdd, numTasks, parents, firstJobId, callSite) {
 

@@ -380,7 +380,7 @@ private[spark] class DAGScheduler(
     checkBarrierStageWithRDDChainPattern(rdd, rdd.getNumPartitions)
 
     val numTasks = rdd.partitions.length                    // 基于RDD 分区数量，定义Task数量
-    val parents = getOrCreateParentStages(rdd, jobId)       // 基于当前依赖的RDD, 找到上游的依赖的 ShuffleDependency
+    val parents = getOrCreateParentStages(rdd, jobId)       //
     val id = nextStageId.getAndIncrement()                  // 更新一个 stageId
 
     // 基于当前的 ShuffleDependency[RDD] 创建一个 ShuffleMapStage
@@ -1121,8 +1121,7 @@ private[spark] class DAGScheduler(
     }
     val taskIdToLocations: Map[Int, Seq[TaskLocation]] = try {
       stage match {
-        case s: ShuffleMapStage =>
-          partitionsToCompute.map { id => (id, getPreferredLocs(stage.rdd, id))}.toMap
+        case s: ShuffleMapStage => partitionsToCompute.map { id => (id, getPreferredLocs(stage.rdd, id))}.toMap
         case s: ResultStage =>
           partitionsToCompute.map { id =>
             val p = s.partitions(id)
@@ -1157,17 +1156,17 @@ private[spark] class DAGScheduler(
     var taskBinary: Broadcast[Array[Byte]] = null
     var partitions: Array[Partition] = null
     try {
-      // For ShuffleMapTask, serialize and broadcast (rdd, shuffleDep).
-      // For ResultTask, serialize and broadcast (rdd, func).
+      // 如果是 ShuffleMapStage, 将序列化并且广播 (rdd, shuffleDep).
+      // 如果是 ResultTask, 将序列化并且广播 (rdd, func).
       var taskBinaryBytes: Array[Byte] = null
-      // taskBinaryBytes and partitions are both effected by the checkpoint status. We need
-      // this synchronization in case another concurrent job is checkpointing this RDD, so we get a
-      // consistent view of both variables.
+      // taskBinaryBytes 和 partitions 都受checkpoint的影响。
+      // 我们需要这种同步，以防另一个并发的作业正在对此 RDD 进行checkpoint，
+      // 这样我们就可以获得这两个变量的一致视图。
       RDDCheckpointData.synchronized {
         taskBinaryBytes = stage match {
           case stage: ShuffleMapStage =>
-            JavaUtils.bufferToArray(
-              closureSerializer.serialize((stage.rdd, stage.shuffleDep): AnyRef))
+            // 将RDD跟 ShuffleDependency 进行Checkpoint
+            JavaUtils.bufferToArray(closureSerializer.serialize((stage.rdd, stage.shuffleDep): AnyRef))
           case stage: ResultStage =>
             JavaUtils.bufferToArray(closureSerializer.serialize((stage.rdd, stage.func): AnyRef))
         }
@@ -1195,9 +1194,9 @@ private[spark] class DAGScheduler(
       stage match {
         case stage: ShuffleMapStage =>
           stage.pendingPartitions.clear()
-          partitionsToCompute.map { id =>
-            val locs = taskIdToLocations(id)
-            val part = partitions(id)
+          partitionsToCompute.map { id =>  // 分区ID
+            val locs = taskIdToLocations(id)   //
+            val part = partitions(id)   // 分区信息
             stage.pendingPartitions += id
             new ShuffleMapTask(stage.id, stage.latestInfo.attemptNumber,
               taskBinary, part, locs, properties, serializedTaskMetrics, Option(jobId),
