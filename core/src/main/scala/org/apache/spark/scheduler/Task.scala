@@ -28,7 +28,7 @@ import org.apache.spark.metrics.MetricsSystem
 import org.apache.spark.util._
 
 /**
- * A unit of execution. We have two kinds of Task's in Spark:
+ * 一个执行单元。在Spark中，我们有两种类型的任务:
  *
  *  - [[org.apache.spark.scheduler.ShuffleMapTask]]
  *  - [[org.apache.spark.scheduler.ResultTask]]
@@ -38,26 +38,28 @@ import org.apache.spark.util._
  * and sends the task output back to the driver application. A ShuffleMapTask executes the task
  * and divides the task output to multiple buckets (based on the task's partitioner).
  *
- * @param stageId id of the stage this task belongs to
- * @param stageAttemptId attempt id of the stage this task belongs to
- * @param partitionId index of the number in the RDD
- * @param localProperties copy of thread-local properties set by the user on the driver side.
- * @param serializedTaskMetrics a `TaskMetrics` that is created and serialized on the driver side
- *                              and sent to executor side.
+ * 一个 Spark 作业由一个或多个 stage 组成。
+ * 作业中的最后一个 stage 包括多个 ResultTask，而较早的stage则包括 ShuffleMapTasks。
+ * - ResultTask 执行任务，并将任务输出发送回 driver 端。
+ * - ShuffleMapTask 执行任务并将任务输出分割成多个桶（基于任务的分区器）。
  *
- * The parameters below are optional:
- * @param jobId id of the job this task belongs to
- * @param appId id of the app this task belongs to
- * @param appAttemptId attempt id of the app this task belongs to
- * @param isBarrier whether this task belongs to a barrier stage. Spark must launch all the tasks
- *                  at the same time for a barrier stage.
+ * @param stageId 这个任务所属的stage的ID。
+ * @param stageAttemptId 这个任务所属的 stage attemp Id
+ * @param partitionId RDD 的分区索引号
+ * @param localProperties copy of thread-local properties set by the user on the driver side.
+ * @param serializedTaskMetrics 一个在driver端创建、序列化并发送到executor端的 TaskMetrics 对象。
+ *
+ * 可选属性:
+ * @param jobId task 所属的 JobId
+ * @param appId 这个任务所属的应用程序的ID
+ * @param appAttemptId task 的重试ID
+ * @param isBarrier 这个任务是否属于一个（barrier stage）。对于barrier stage，Spark 必须同时启动所有任务。
  */
 private[spark] abstract class Task[T](
     val stageId: Int,
     val stageAttemptId: Int,
     val partitionId: Int,
     @transient var localProperties: Properties = new Properties,
-    // The default value is only used in tests.
     serializedTaskMetrics: Array[Byte] =
       SparkEnv.get.closureSerializer.newInstance().serialize(TaskMetrics.registered).array(),
     val jobId: Option[Int] = None,
@@ -69,7 +71,7 @@ private[spark] abstract class Task[T](
     SparkEnv.get.closureSerializer.newInstance().deserialize(ByteBuffer.wrap(serializedTaskMetrics))
 
   /**
-   * Called by [[org.apache.spark.executor.Executor]] to run this task.
+   * [[org.apache.spark.executor.Executor]] 运行这个 Task 的入口程序.
    *
    * @param taskAttemptId an identifier for this task attempt that is unique within a SparkContext.
    * @param attemptNumber how many times this task has been attempted (0 for the first attempt)

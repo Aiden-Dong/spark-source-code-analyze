@@ -1071,13 +1071,20 @@ private[spark] class DAGScheduler(
     }
   }
 
-  /** Submits stage, but first recursively submits any missing parents. */
+  /***
+   * 提交Stage 执行
+   * @param stage
+   */
   private def submitStage(stage: Stage) {
+
     val jobId = activeJobForStage(stage)
+
     if (jobId.isDefined) {
       logDebug("submitStage(" + stage + ")")
       // 首先判断这个stage 没有被执行
       if (!waitingStages(stage) && !runningStages(stage) && !failedStages(stage)) {
+
+        // 获取当前stage 的依赖上游
         val missing = getMissingParentStages(stage).sortBy(_.id)
 
         logDebug("missing: " + missing)
@@ -1116,8 +1123,7 @@ private[spark] class DAGScheduler(
       case s: ShuffleMapStage =>
         outputCommitCoordinator.stageStart(stage = s.id, maxPartitionId = s.numPartitions - 1)
       case s: ResultStage =>
-        outputCommitCoordinator.stageStart(
-          stage = s.id, maxPartitionId = s.rdd.partitions.length - 1)
+        outputCommitCoordinator.stageStart(stage = s.id, maxPartitionId = s.rdd.partitions.length - 1)
     }
     val taskIdToLocations: Map[Int, Seq[TaskLocation]] = try {
       stage match {
