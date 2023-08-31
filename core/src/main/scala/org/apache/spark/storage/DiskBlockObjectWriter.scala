@@ -65,12 +65,12 @@ private[spark] class DiskBlockObjectWriter(
   }
 
   /** The file channel, used for repositioning / truncating the file. */
-  private var channel: FileChannel = null
-  private var mcs: ManualCloseOutputStream = null
-  private var bs: OutputStream = null
-  private var fos: FileOutputStream = null
-  private var ts: TimeTrackingOutputStream = null
-  private var objOut: SerializationStream = null
+  private var channel: FileChannel = null               // fos 对应的 NOI 操作对象
+  private var mcs: ManualCloseOutputStream = null       // 封装了 ts 的BuffedOutputStream, buffer 大小之前已经设置
+  private var bs: OutputStream = null                   // 封装了序列化方法的 mcs
+  private var fos: FileOutputStream = null              // 对应目标文件的FileOutputStream
+  private var ts: TimeTrackingOutputStream = null       // fos 的封装对象，用于记录Shuffle操作时间
+  private var objOut: SerializationStream = null        // 序列化的流写对象，bs 的封装类
   private var initialized = false
   private var streamOpen = false
   private var hasBeenClosed = false
@@ -116,6 +116,7 @@ private[spark] class DiskBlockObjectWriter(
       initialize()
       initialized = true
     }
+
 
     bs = serializerManager.wrapStream(blockId, mcs)
     objOut = serializerInstance.serializeStream(bs)
@@ -230,15 +231,17 @@ private[spark] class DiskBlockObjectWriter(
   }
 
   /**
-   * Writes a key-value pair.
+   * 写出一个keyValue对象
    */
   def write(key: Any, value: Any) {
     if (!streamOpen) {
       open()
     }
 
+    // 将KeyValue 对象写出
     objOut.writeKey(key)
     objOut.writeValue(value)
+    // 记录写出指标 ： 写出记录，写出大小
     recordWritten()
   }
 

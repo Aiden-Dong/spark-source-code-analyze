@@ -48,53 +48,55 @@ import org.apache.spark.shuffle.ShuffleWriter;
 import org.apache.spark.storage.*;
 import org.apache.spark.util.Utils;
 
-/**
- * This class implements sort-based shuffle's hash-style shuffle fallback path. This write path
- * writes incoming records to separate files, one file per reduce partition, then concatenates these
- * per-partition files to form a single output file, regions of which are served to reducers.
- * Records are not buffered in memory. It writes output in a format
- * that can be served / consumed via {@link org.apache.spark.shuffle.IndexShuffleBlockResolver}.
+/***********************************************************
+ *
+ * 这个类的作用是在基于排序的shuffle操作中，为hash式shuffle提供备用的执行路径。
+ * 这个写入路径将传入的record写入单独的文件，每个reduce分区一个文件，然后将这些分区的文件连接起来形成一个单一的输出文件。
+ * 提供给reduce使用。
+ *
+ * Record并不在内存中缓冲。它是一种特殊的写出格式，写出内容可以通过{@link org.apache.spark.shuffle.IndexShuffleBlockResolver} 来提供/消费。
  * <p>
- * This write path is inefficient for shuffles with large numbers of reduce partitions because it
- * simultaneously opens separate serializers and file streams for all partitions. As a result,
- * {@link SortShuffleManager} only selects this write path when
+ * 对于包含大量reduce分区的shuffle操作来说，这个写入路径效率较低，
+ * 因为它会同时为所有分区打开独立的序列化器和文件流。
+ *
+ * 因此，{@link SortShuffleManager} 仅在以下情况下选择这个写入路径：
  * <ul>
- *    <li>no Ordering is specified,</li>
- *    <li>no Aggregator is specified, and</li>
- *    <li>the number of partitions is less than
- *      <code>spark.shuffle.sort.bypassMergeThreshold</code>.</li>
+ *    <li>不存在排序的情况,</li>
+ *    <li>没有指定聚合器</li>
+ *    <li>分区数量少于  <code>spark.shuffle.sort.bypassMergeThreshold</code>.</li>
  * </ul>
  *
- * This code used to be part of {@link org.apache.spark.util.collection.ExternalSorter} but was
- * refactored into its own class in order to reduce code complexity; see SPARK-7855 for details.
+ * 这段代码曾经是 {@link org.apache.spark.util.collection.ExternalSorter} 的一部分，但为了降低代码复杂性，它被重构到自己的类中
+ * 有关详细信息，请参阅 SPARK-7855。
  * <p>
- * There have been proposals to completely remove this code path; see SPARK-6026 for details.
+ *
+ * 曾有提议完全移除这段代码路径；有关详细信息，请参阅 SPARK-6026。
  */
 final class BypassMergeSortShuffleWriter<K, V> extends ShuffleWriter<K, V> {
 
   private static final Logger logger = LoggerFactory.getLogger(BypassMergeSortShuffleWriter.class);
 
-  private final int fileBufferSize;
-  private final boolean transferToEnabled;
-  private final int numPartitions;
+  private final int fileBufferSize;           // Shuffle 写Buffer 大小
+  private final boolean transferToEnabled;    // 文件传输过程中是否开启 NIO transferTO 方法
+  private final int numPartitions;              // 总共要写出的分区数
   private final BlockManager blockManager;
-  private final Partitioner partitioner;
-  private final ShuffleWriteMetrics writeMetrics;
-  private final int shuffleId;
-  private final int mapId;
-  private final Serializer serializer;
+  private final Partitioner partitioner;        // 当前RDD的写出分区器
+  private final ShuffleWriteMetrics writeMetrics;  // shuffle 写指标统计
+  private final int shuffleId;                  // shuffleId
+  private final int mapId;                      // 当前操作RDD的读取分区号
+  private final Serializer serializer;          //  数据序列化方法
   private final IndexShuffleBlockResolver shuffleBlockResolver;
 
   /** Array of file writers, one for each partition */
-  private DiskBlockObjectWriter[] partitionWriters;
+  private DiskBlockObjectWriter[] partitionWriters;      // 分区写工具， 每个分区对应一个分区写文件
   private FileSegment[] partitionWriterSegments;
   @Nullable private MapStatus mapStatus;
   private long[] partitionLengths;
 
   /**
-   * Are we in the process of stopping? Because map tasks can call stop() with success = true
-   * and then call stop() with success = false if they get an exception, we want to make sure
-   * we don't try deleting files, etc twice.
+   * 我们正在停止过程中吗？
+   * 因为map任务可以先调用stop()，成功返回true，然后如果它们遇到异常，可能会再次调用stop()，但这次成功返回false。
+   * 因此，我们希望确保我们不会尝试两次删除文件等操作。
    */
   private boolean stopping = false;
 
@@ -105,13 +107,14 @@ final class BypassMergeSortShuffleWriter<K, V> extends ShuffleWriter<K, V> {
       int mapId,
       TaskContext taskContext,
       SparkConf conf) {
+
     // Use getSizeAsKb (not bytes) to maintain backwards compatibility if no units are provided
     this.fileBufferSize = (int) conf.getSizeAsKb("spark.shuffle.file.buffer", "32k") * 1024;
     this.transferToEnabled = conf.getBoolean("spark.file.transferTo", true);
     this.blockManager = blockManager;
-    final ShuffleDependency<K, V, V> dep = handle.dependency();
-    this.mapId = mapId;
-    this.shuffleId = dep.shuffleId();
+    final ShuffleDependency<K, V, V> dep = handle.dependency();    // 获取当前的ShuffleDependency
+    this.mapId = mapId;                                             // 分区号
+    this.shuffleId = dep.shuffleId();                               // shuffle ID
     this.partitioner = dep.partitioner();
     this.numPartitions = partitioner.numPartitions();
     this.writeMetrics = taskContext.taskMetrics().shuffleWriteMetrics();
@@ -119,6 +122,11 @@ final class BypassMergeSortShuffleWriter<K, V> extends ShuffleWriter<K, V> {
     this.shuffleBlockResolver = shuffleBlockResolver;
   }
 
+  /***
+   *
+   * @param records 数据迭代器
+   * @throws IOException
+   */
   @Override
   public void write(Iterator<Product2<K, V>> records) throws IOException {
     assert (partitionWriters == null);
@@ -128,39 +136,51 @@ final class BypassMergeSortShuffleWriter<K, V> extends ShuffleWriter<K, V> {
       mapStatus = MapStatus$.MODULE$.apply(blockManager.shuffleServerId(), partitionLengths);
       return;
     }
-    final SerializerInstance serInstance = serializer.newInstance();
-    final long openStartTime = System.nanoTime();
+    final SerializerInstance serInstance = serializer.newInstance();   // 创建一个序列化实例
+
+    final long openStartTime = System.nanoTime();   // 记录当前时间
+
     partitionWriters = new DiskBlockObjectWriter[numPartitions];
     partitionWriterSegments = new FileSegment[numPartitions];
+
     for (int i = 0; i < numPartitions; i++) {
-      final Tuple2<TempShuffleBlockId, File> tempShuffleBlockIdPlusFile =
-        blockManager.diskBlockManager().createTempShuffleBlock();
+
+      // 对于每个分区， 创建一个分区文件块
+      final Tuple2<TempShuffleBlockId, File> tempShuffleBlockIdPlusFile = blockManager.diskBlockManager().createTempShuffleBlock();
+
       final File file = tempShuffleBlockIdPlusFile._2();
+
       final BlockId blockId = tempShuffleBlockIdPlusFile._1();
-      partitionWriters[i] =
-        blockManager.getDiskWriter(blockId, file, serInstance, fileBufferSize, writeMetrics);
+
+      // 通过BlockManager 封装了一个磁盘写入工具 [[org.apache.spark.storage.DiskBlockObjectWriter]]
+      partitionWriters[i] = blockManager.getDiskWriter(blockId, file, serInstance, fileBufferSize, writeMetrics);
     }
-    // Creating the file to write to and creating a disk writer both involve interacting with
-    // the disk, and can take a long time in aggregate when we open many files, so should be
-    // included in the shuffle write time.
+    // 创建要写入的文件和创建磁盘写入器都涉及与磁盘的交互，当我们打开许多文件时，总体上可能需要很长时间
+    // 因此应将其包括在shuffle写入时间中。
     writeMetrics.incWriteTime(System.nanoTime() - openStartTime);
 
+    // 遍历迭代数据记录，将记录内容写出
     while (records.hasNext()) {
       final Product2<K, V> record = records.next();
       final K key = record._1();
+      // 找到对应的写文件， 数据写出
       partitionWriters[partitioner.getPartition(key)].write(key, record._2());
     }
 
+    // 将每个文件都提交上
     for (int i = 0; i < numPartitions; i++) {
       final DiskBlockObjectWriter writer = partitionWriters[i];
       partitionWriterSegments[i] = writer.commitAndGet();
       writer.close();
     }
 
+    // 获取一个ShuffleBlock 写出文件
     File output = shuffleBlockResolver.getDataFile(shuffleId, mapId);
     File tmp = Utils.tempFileWith(output);
     try {
+      // 将每个分区文件合并写到目标文件
       partitionLengths = writePartitionedFile(tmp);
+
       shuffleBlockResolver.writeIndexFileAndCommit(shuffleId, mapId, partitionLengths, tmp);
     } finally {
       if (tmp.exists() && !tmp.delete()) {

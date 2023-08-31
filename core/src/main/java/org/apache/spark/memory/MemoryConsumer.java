@@ -114,10 +114,13 @@ public abstract class MemoryConsumer {
    * @throws OutOfMemoryError
    */
   protected MemoryBlock allocatePage(long required) {
+    // 分配一个新的内存页，如果对象太大，直接分配一页
     MemoryBlock page = taskMemoryManager.allocatePage(Math.max(pageSize, required), this);
+
     if (page == null || page.size() < required) {
       throwOom(page, required);
     }
+
     used += page.size();
     return page;
   }

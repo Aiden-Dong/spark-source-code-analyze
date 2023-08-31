@@ -347,8 +347,8 @@ public class TaskMemoryManager {
   }
 
   /**
-   * Given a memory page and offset within that page, encode this address into a 64-bit long.
-   * This address will remain valid as long as the corresponding page has not been freed.
+   * 给定一个内存页和该页内的偏移量，在一个64位长整型中编码这个地址。
+   * 只要相应的内存页尚未被释放，这个地址将保持有效。
    *
    * @param page a data page allocated by {@link TaskMemoryManager#allocatePage}/
    * @param offsetInPage an offset in this page which incorporates the base offset. In other words,

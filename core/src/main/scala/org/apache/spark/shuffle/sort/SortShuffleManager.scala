@@ -116,23 +116,20 @@ private[spark] class SortShuffleManager(conf: SparkConf) extends ShuffleManager 
       handle.asInstanceOf[BaseShuffleHandle[K, _, C]], startPartition, endPartition, context)
   }
 
-  // 为给定的分区获取一个ShuffleWriter。通过MapTask 在Executor 上调用
 
   /***
-   *
-   * @param handle
-   * @param mapId
-   * @param context
+   * 为给定的分区获取一个ShuffleWriter。通过MapTask 在Executor 上调用
+   * @param handle ShuffleDependency 注册得到的 ShuffleHandler 对象
+   * @param mapId 用于写出的分区文件
+   * @param context 任务上下文
    * @return
    */
-  override def getWriter[K, V](
-      handle: ShuffleHandle,
-      mapId: Int,
-      context: TaskContext): ShuffleWriter[K, V] = {
+  override def getWriter[K, V](handle: ShuffleHandle, mapId: Int, context: TaskContext): ShuffleWriter[K, V] = {
     numMapsForShuffle.putIfAbsent(
       handle.shuffleId, handle.asInstanceOf[BaseShuffleHandle[_, _, _]].numMaps)
     val env = SparkEnv.get
     handle match {
+        // SerializedShuffleHandle
       case unsafeShuffleHandle: SerializedShuffleHandle[K @unchecked, V @unchecked] =>
         new UnsafeShuffleWriter(
           env.blockManager,
@@ -142,6 +139,7 @@ private[spark] class SortShuffleManager(conf: SparkConf) extends ShuffleManager 
           mapId,
           context,
           env.conf)
+        // BypassMergeSortShuffleHandle
       case bypassMergeSortHandle: BypassMergeSortShuffleHandle[K @unchecked, V @unchecked] =>
         new BypassMergeSortShuffleWriter(
           env.blockManager,
@@ -150,6 +148,7 @@ private[spark] class SortShuffleManager(conf: SparkConf) extends ShuffleManager 
           mapId,
           context,
           env.conf)
+        // SortShuffleWriter
       case other: BaseShuffleHandle[K @unchecked, V @unchecked, _] =>
         new SortShuffleWriter(shuffleBlockResolver, other, mapId, context)
     }

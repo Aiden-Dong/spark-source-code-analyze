@@ -134,19 +134,17 @@ final class ShuffleInMemorySorter {
   }
 
   /**
-   * Inserts a record to be sorted.
+   * 插入一个要进行排序的记录。
    *
-   * @param recordPointer a pointer to the record, encoded by the task memory manager. Due to
-   *                      certain pointer compression techniques used by the sorter, the sort can
-   *                      only operate on pointers that point to locations in the first
-   *                      {@link PackedRecordPointer#MAXIMUM_PAGE_SIZE_BYTES} bytes of a data page.
-   * @param partitionId the partition id, which must be less than or equal to
-   *                    {@link PackedRecordPointer#MAXIMUM_PARTITION_ID}.
+   * @param recordPointer 由任务内存管理器编码的record的指针。
+   *                      由于排序器使用了某些指针压缩技术，所以排序只能对指向数据页前{@link PackedRecordPointer#MAXIMUM_PAGE_SIZE_BYTES}字节内的位置的指针进行操作。
+   * @param partitionId 分区ID，必须小于或等于{@link PackedRecordPointer#MAXIMUM_PARTITION_ID}。
    */
   public void insertRecord(long recordPointer, int partitionId) {
     if (!hasSpaceForAnotherRecord()) {
       throw new IllegalStateException("There is no space for new record");
     }
+    // 对象指针跟分区号的封装结构
     array.set(pos, PackedRecordPointer.packPointer(recordPointer, partitionId));
     pos++;
   }
@@ -178,7 +176,7 @@ final class ShuffleInMemorySorter {
   }
 
   /**
-   * Return an iterator over record pointers in sorted order.
+   * 返回一个按照排序顺序排列的记录指针的迭代器.
    */
   public ShuffleSorterIterator getSortedIterator() {
     int offset = 0;
