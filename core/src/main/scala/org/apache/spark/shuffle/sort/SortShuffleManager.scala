@@ -71,6 +71,7 @@ private[spark] class SortShuffleManager(conf: SparkConf) extends ShuffleManager 
   // ShuffleId -> ShuffleMapFile 的Map
   private[this] val numMapsForShuffle = new ConcurrentHashMap[Int, Int]()
 
+  // 需要指出这个工具的作用
   override val shuffleBlockResolver = new IndexShuffleBlockResolver(conf)
 
 
@@ -129,7 +130,8 @@ private[spark] class SortShuffleManager(conf: SparkConf) extends ShuffleManager 
       handle.shuffleId, handle.asInstanceOf[BaseShuffleHandle[_, _, _]].numMaps)
     val env = SparkEnv.get
     handle match {
-        // SerializedShuffleHandle
+      // SerializedShuffleHandle
+      // 基于序列化对象的排序器
       case unsafeShuffleHandle: SerializedShuffleHandle[K @unchecked, V @unchecked] =>
         new UnsafeShuffleWriter(
           env.blockManager,
@@ -140,6 +142,7 @@ private[spark] class SortShuffleManager(conf: SparkConf) extends ShuffleManager 
           context,
           env.conf)
         // BypassMergeSortShuffleHandle
+        // 每个分区一个文件的shuffle写工具
       case bypassMergeSortHandle: BypassMergeSortShuffleHandle[K @unchecked, V @unchecked] =>
         new BypassMergeSortShuffleWriter(
           env.blockManager,
