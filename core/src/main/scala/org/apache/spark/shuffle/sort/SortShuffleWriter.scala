@@ -36,14 +36,6 @@ import org.apache.spark.util.collection.ExternalSorter
  * - 数据写入磁盘： 排序后的数据将被写入磁盘的临时文件中。这些临时文件将用于后续的 Shuffle 阶段。
  * - 元数据记录： 记录元数据，如每个分区的数据所在的文件位置、偏移量等信息，以便后续的 Shuffle 阶段可以正确地读取和合并数据。
  * - 溢写和合并： 如果数据量很大，可能需要进行溢写，将排序后的数据分批写入多个临时文件。后续的 Shuffle 阶段会将这些文件进行合并，以生成最终的结果。
- *
- * @param shuffleBlockResolver
- * @param handle
- * @param mapId
- * @param context
- * @tparam K
- * @tparam V
- * @tparam C
  */
 private[spark] class SortShuffleWriter[K, V, C](
     shuffleBlockResolver: IndexShuffleBlockResolver,
@@ -52,26 +44,28 @@ private[spark] class SortShuffleWriter[K, V, C](
     context: TaskContext)
   extends ShuffleWriter[K, V] with Logging {
 
-  private val dep = handle.dependency
+  private val dep = handle.dependency                     // ShuffleDependency
+  private val blockManager = SparkEnv.get.blockManager    // BlockManager
+  private var sorter: ExternalSorter[K, V, _] = null      // 外部排序器
 
-  private val blockManager = SparkEnv.get.blockManager
-
-  private var sorter: ExternalSorter[K, V, _] = null
-
-  // Are we in the process of stopping? Because map tasks can call stop() with success = true
-  // and then call stop() with success = false if they get an exception, we want to make sure
-  // we don't try deleting files, etc twice.
+  //  我们是否在停止过程中？
+  //  因为ShuffleMapTask可以先调用stop()，成功返回true，然后如果它们遇到异常，可能会再次调用stop()，但这次成功返回false。
+  //  因此，我们要确保我们不会尝试两次删除文件等操作。
   private var stopping = false
-
   private var mapStatus: MapStatus = null
-
   private val writeMetrics = context.taskMetrics().shuffleWriteMetrics
 
-  /** Write a bunch of records to this task's output */
+  /***
+   * 将数据写出去
+   * @param records
+   */
   override def write(records: Iterator[Product2[K, V]]): Unit = {
+
     sorter = if (dep.mapSideCombine) {
+      // 如果需要combine 操作
       new ExternalSorter[K, V, C](context, dep.aggregator, Some(dep.partitioner), dep.keyOrdering, dep.serializer)
     } else {
+      // 如果不需要combine操作
       // In this case we pass neither an aggregator nor an ordering to the sorter, because we don't
       // care whether the keys get sorted in each partition; that will be done on the reduce side
       // if the operation being run is sortByKey.
