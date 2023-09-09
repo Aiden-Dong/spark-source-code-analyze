@@ -105,9 +105,9 @@ private[spark] class ExternalSorter[K, V, C](
   // 注意：将这个值设置得太低可能会导致在序列化时出现过多的拷贝，因为一些序列化器通过在对象数量翻倍时进行增长和拷贝来增加内部数据结构的大小。
   private val serializerBatchSize = conf.getLong("spark.shuffle.spill.batchSize", 10000)
 
-  // 在溢出之前存储在内存中的对象的数据结构。根据是否设置了合并器（Aggregator），我们将对象放入一个AppendOnlyMap中进行合并，或者将它们存储在一个数组缓冲区中。
-  @volatile private var map = new PartitionedAppendOnlyMap[K, C]
-  @volatile private var buffer = new PartitionedPairBuffer[K, C]
+  // 数据的内存缓冲池， 满了将进行spill 操作
+  @volatile private var map = new PartitionedAppendOnlyMap[K, C]           // 如果数据需要 combine 操作，我们则将数据放入 map 结构中
+  @volatile private var buffer = new PartitionedPairBuffer[K, C]           // 如果数据不需要 combine 操作， 我们则将数据放入buff 数据中
 
   // 总共序列化到磁盘的字节数
   private var _diskBytesSpilled = 0L
@@ -158,7 +158,7 @@ private[spark] class ExternalSorter[K, V, C](
     val shouldCombine = aggregator.isDefined
 
     if (shouldCombine) {
-      // Combine values in-memory first using our AppendOnlyMap
+      // 如果需要进行与合并， 则直接在内存中进行合并处理
       val mergeValue = aggregator.get.mergeValue
       val createCombiner = aggregator.get.createCombiner
       var kv: Product2[K, V] = null
@@ -166,7 +166,7 @@ private[spark] class ExternalSorter[K, V, C](
         if (hadValue) mergeValue(oldValue, kv._2) else createCombiner(kv._2)
       }
       while (records.hasNext) {
-        addElementsRead()
+        addElementsRead()    // 记录数据读取
         kv = records.next()  // 提取出 kv 数据记录
         map.changeValue((getPartition(kv._1), kv._1), update)
         maybeSpillCollection(usingMap = true)
@@ -174,8 +174,8 @@ private[spark] class ExternalSorter[K, V, C](
     } else {
       // Stick values into our buffer
       while (records.hasNext) {
-        addElementsRead()
-        val kv = records.next()
+        addElementsRead()         // 记录数据读取
+        val kv = records.next()   //
         buffer.insert(getPartition(kv._1), kv._1, kv._2.asInstanceOf[C])
         maybeSpillCollection(usingMap = false)
       }
@@ -190,7 +190,7 @@ private[spark] class ExternalSorter[K, V, C](
   private def maybeSpillCollection(usingMap: Boolean): Unit = {
     var estimatedSize = 0L
     if (usingMap) {
-      estimatedSize = map.estimateSize()
+      estimatedSize = map.estimateSize()   // 计算当前数据大小
       if (maybeSpill(map, estimatedSize)) {
         map = new PartitionedAppendOnlyMap[K, C]
       }
@@ -255,7 +255,7 @@ private[spark] class ExternalSorter[K, V, C](
     // List of batch sizes (bytes) in the order they are written to disk
     val batchSizes = new ArrayBuffer[Long]
 
-    // How many elements we have in each partition
+    // 记录每个分区写入的数据
     val elementsPerPartition = new Array[Long](numPartitions)
 
     // Flush the disk writer's contents to disk, and update relevant variables.
@@ -271,8 +271,7 @@ private[spark] class ExternalSorter[K, V, C](
     try {
       while (inMemoryIterator.hasNext) {
         val partitionId = inMemoryIterator.nextPartition()
-        require(partitionId >= 0 && partitionId < numPartitions,
-          s"partition Id: ${partitionId} should be in the range [0, ${numPartitions})")
+        require(partitionId >= 0 && partitionId < numPartitions, s"partition Id: ${partitionId} should be in the range [0, ${numPartitions})")
         inMemoryIterator.writeNext(writer)
         elementsPerPartition(partitionId) += 1
         objectsWritten += 1

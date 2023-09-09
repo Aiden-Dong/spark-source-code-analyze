@@ -87,7 +87,6 @@ private[spark] class SortShuffleManager(conf: SparkConf) extends ShuffleManager 
       numMaps: Int,    // 输出文件的数量
       dependency: ShuffleDependency[K, V, C]): ShuffleHandle = {
 
-
     if (SortShuffleWriter.shouldBypassMergeSort(conf, dependency)) {
       // 当前不能设置  combine, 并且 rdd 的分区数少于 spark.shuffle.sort.bypassMergeThreshold
       // 如果分区数少于 spark.shuffle.sort.bypassMergeThreshold，并且我们不需要在map阶段进行combine操作，
@@ -104,9 +103,13 @@ private[spark] class SortShuffleManager(conf: SparkConf) extends ShuffleManager 
     }
   }
 
-  /**
-   * Get a reader for a range of reduce partitions (startPartition to endPartition-1, inclusive).
-   * Called on executors by reduce tasks.
+  /***
+   * 返回一个 Shuffle 数据的读取器
+   * @param handle
+   * @param startPartition 起始分区
+   * @param endPartition   结束分区
+   * @param context        任务上下文
+   * @return
    */
   override def getReader[K, C](
       handle: ShuffleHandle,

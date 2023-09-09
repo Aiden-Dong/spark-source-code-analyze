@@ -66,31 +66,27 @@ abstract class Serializer {
 
   /**
    * :: Private ::
-   * Returns true if this serializer supports relocation of its serialized objects and false
-   * otherwise. This should return true if and only if reordering the bytes of serialized objects
-   * in serialization stream output is equivalent to having re-ordered those elements prior to
-   * serializing them. More specifically, the following should hold if a serializer supports
-   * relocation:
+   * 如果此序列化器支持其序列化对象的重新定位，则返回true；否则返回false。
+   * 只有当在序列化流输出中重新排序序列化对象的字节等效于在序列化之前重新排序这些元素时，它才应该返回true。
+   * 更具体地说，如果序列化器支持重新定位，那么以下情况应该成立：
    *
    * {{{
-   * serOut.open()
-   * position = 0
-   * serOut.write(obj1)
-   * serOut.flush()
-   * position = # of bytes written to stream so far
-   * obj1Bytes = output[0:position-1]
-   * serOut.write(obj2)
-   * serOut.flush()
-   * position2 = # of bytes written to stream so far
-   * obj2Bytes = output[position:position2-1]
-   * serIn.open([obj2bytes] concatenate [obj1bytes]) should return (obj2, obj1)
+   *   serOut.open()
+   *   position = 0
+   *   serOut.write(obj1)
+   *   serOut.flush()
+   *   position = # 到目前为止写入流的字节数。
+   *   obj1Bytes = output[0:position-1]
+   *   serOut.write(obj2)
+   *   serOut.flush()
+   *   position2 = # 到目前为止写入流的字节数
+   *   obj2Bytes = output[position:position2-1]
+   *   serIn.open([obj2bytes] concatenate [obj1bytes]) should return (obj2, obj1)
    * }}}
    *
-   * In general, this property should hold for serializers that are stateless and that do not
-   * write special metadata at the beginning or end of the serialization stream.
+   * 通常情况下，对于那些是无状态的、不在序列化流的开头或结尾写入特殊元数据的序列化器，这个属性应该成立。
    *
-   * This API is private to Spark; this method should not be overridden in third-party subclasses
-   * or called in user code and is subject to removal in future Spark releases.
+   * 此API对于Spark是私有的；第三方子类不应该覆盖这个方法，用户代码也不应该调用它，并且可能在未来的Spark版本中被删除。
    *
    * See SPARK-7311 for more details.
    */

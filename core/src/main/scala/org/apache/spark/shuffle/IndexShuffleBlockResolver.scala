@@ -52,6 +52,7 @@ private[spark] class IndexShuffleBlockResolver(
   private val transportConf = SparkTransportConf.fromSparkConf(conf, "shuffle")
 
   def getDataFile(shuffleId: Int, mapId: Int): File = {
+    // shuffle_{shuffleId}_{mapId}_0.data
     blockManager.diskBlockManager.getFile(ShuffleDataBlockId(shuffleId, mapId, NOOP_REDUCE_ID))
   }
 
@@ -128,8 +129,9 @@ private[spark] class IndexShuffleBlockResolver(
    * end of the output file. This will be used by getBlockData to figure out where each block
    * begins and ends.
    *
-   * It will commit the data and index file as an atomic operation, use the existing ones, or
-   * replace them with new ones.
+   * 编写一个索引文件，其中包括每个Block的偏移量，以及文件末尾的最后偏移量，用于确定每个Block的起始位置和结束位置的位置。
+   *
+   * 它将把数据和索引文件作为一个原子操作提交，使用现有的文件，或者用新文件替换它们。
    *
    * Note: the `lengths` will be updated to match the existing index file if use the existing ones.
    */

@@ -53,8 +53,7 @@ private[spark] abstract class Spillable[C](taskMemoryManager: TaskMemoryManager)
   private[this] val initialMemoryThreshold: Long =
     SparkEnv.get.conf.getLong("spark.shuffle.spill.initialMemoryThreshold", 5 * 1024 * 1024)
 
-  // Force this collection to spill when there are this many elements in memory
-  // For testing only
+  // 当内存中有这么多元素时，强制该集合进行溢出。仅用于测试。
   private[this] val numElementsForceSpillThreshold: Int =
     SparkEnv.get.conf.get(SHUFFLE_SPILL_NUM_ELEMENTS_FORCE_SPILL_THRESHOLD)
 
@@ -72,24 +71,26 @@ private[spark] abstract class Spillable[C](taskMemoryManager: TaskMemoryManager)
   private[this] var _spillCount = 0
 
   /**
-   * Spills the current in-memory collection to disk if needed. Attempts to acquire more
-   * memory before spilling.
+   * 如果需要，将当前的内存集合溢出到磁盘。
    *
-   * @param collection collection to spill to disk
-   * @param currentMemory estimated size of the collection in bytes
-   * @return true if `collection` was spilled to disk; false otherwise
+   * @param collection 等待被spill 的数据集合
+   * @param currentMemory 当前数据占内存的大小
+   * @return 如果满足被spill条件，则返回true, 否则false
    */
   protected def maybeSpill(collection: C, currentMemory: Long): Boolean = {
     var shouldSpill = false
+    // 读取的数据条数必须是32的倍数
+    // 数据占的内存大小必须大于 5M
     if (elementsRead % 32 == 0 && currentMemory >= myMemoryThreshold) {
-      // Claim up to double our current memory from the shuffle memory pool
+      // 尝试获取两倍的当前使用内存
       val amountToRequest = 2 * currentMemory - myMemoryThreshold
       val granted = acquireMemory(amountToRequest)
       myMemoryThreshold += granted
-      // If we were granted too little memory to grow further (either tryToAcquire returned 0,
-      // or we already had more memory than myMemoryThreshold), spill the current collection
+      // 如果我们被授予的内存太少而无法继续增长（无论是tryToAcquire返回0，还是我们已经拥有的内存超过了myMemoryThreshold），
+      // 则将当前集合溢出。
       shouldSpill = currentMemory >= myMemoryThreshold
     }
+    // 如果内存不满足或者数据过多
     shouldSpill = shouldSpill || _elementsRead > numElementsForceSpillThreshold
     // Actually spill
     if (shouldSpill) {
@@ -98,7 +99,7 @@ private[spark] abstract class Spillable[C](taskMemoryManager: TaskMemoryManager)
       spill(collection)
       _elementsRead = 0
       _memoryBytesSpilled += currentMemory
-      releaseMemory()
+      releaseMemory() // 释放内存空间
     }
     shouldSpill
   }

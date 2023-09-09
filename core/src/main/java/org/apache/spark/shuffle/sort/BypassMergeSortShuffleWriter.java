@@ -136,35 +136,36 @@ final class BypassMergeSortShuffleWriter<K, V> extends ShuffleWriter<K, V> {
       mapStatus = MapStatus$.MODULE$.apply(blockManager.shuffleServerId(), partitionLengths);
       return;
     }
+
     final SerializerInstance serInstance = serializer.newInstance();   // 创建一个序列化实例
 
     final long openStartTime = System.nanoTime();   // 记录当前时间
 
-    partitionWriters = new DiskBlockObjectWriter[numPartitions];
-    partitionWriterSegments = new FileSegment[numPartitions];
+    // Step 1 : 为每个分区创建一个分区文件写
+    partitionWriters = new DiskBlockObjectWriter[numPartitions];    // 对象写文件工具
+    partitionWriterSegments = new FileSegment[numPartitions];       // 文件元信息
 
     for (int i = 0; i < numPartitions; i++) {
-
-      // 对于每个分区， 创建一个分区文件块
+      // 对于每个分区， 创建一个临时文件用来存放shuffle数据
       final Tuple2<TempShuffleBlockId, File> tempShuffleBlockIdPlusFile = blockManager.diskBlockManager().createTempShuffleBlock();
-
       final File file = tempShuffleBlockIdPlusFile._2();
-
       final BlockId blockId = tempShuffleBlockIdPlusFile._1();
 
-      // 通过BlockManager 封装了一个磁盘写入工具 [[org.apache.spark.storage.DiskBlockObjectWriter]]
+      // 通过 BlockManager 封装了一个磁盘写入工具 [[org.apache.spark.storage.DiskBlockObjectWriter]]
       partitionWriters[i] = blockManager.getDiskWriter(blockId, file, serInstance, fileBufferSize, writeMetrics);
     }
+
     // 创建要写入的文件和创建磁盘写入器都涉及与磁盘的交互，当我们打开许多文件时，总体上可能需要很长时间
     // 因此应将其包括在shuffle写入时间中。
     writeMetrics.incWriteTime(System.nanoTime() - openStartTime);
 
-    // 遍历迭代数据记录，将记录内容写出
+    // Step 2 : 遍历迭代数据记录，将记录内容写出
     while (records.hasNext()) {
       final Product2<K, V> record = records.next();
       final K key = record._1();
+      final int partition = partitioner.getPartition(key);
       // 找到对应的写文件， 数据写出
-      partitionWriters[partitioner.getPartition(key)].write(key, record._2());
+      partitionWriters[partition].write(key, record._2());
     }
 
     // 将每个文件都提交上
@@ -174,11 +175,11 @@ final class BypassMergeSortShuffleWriter<K, V> extends ShuffleWriter<K, V> {
       writer.close();
     }
 
-    // 获取一个ShuffleBlock 写出文件
-    File output = shuffleBlockResolver.getDataFile(shuffleId, mapId);
-    File tmp = Utils.tempFileWith(output);
+    // Step 3 : 合并临时文件，生成目标文件
+    File output = shuffleBlockResolver.getDataFile(shuffleId, mapId);   // 创建shuffle 写出文件
+    File tmp = Utils.tempFileWith(output);   // {output}.xxxxx -- 临时文件
     try {
-      // 将每个分区文件合并写到目标文件
+      // 将每个分区文件合并写到目标文件， 并返回每个分区的文件长度
       partitionLengths = writePartitionedFile(tmp);
 
       shuffleBlockResolver.writeIndexFileAndCommit(shuffleId, mapId, partitionLengths, tmp);
@@ -196,29 +197,29 @@ final class BypassMergeSortShuffleWriter<K, V> extends ShuffleWriter<K, V> {
   }
 
   /**
-   * Concatenate all of the per-partition files into a single combined file.
+   * 将所有分区文件连接成一个单独的组合文件。.
    *
-   * @return array of lengths, in bytes, of each partition of the file (used by map output tracker).
+   * @return 每个分区文件的长度数组，以字节为单位（由map输出跟踪器使用）。
    */
   private long[] writePartitionedFile(File outputFile) throws IOException {
-    // Track location of the partition starts in the output file
+    // 跟踪输出文件中各个分区开始位置的位置信息。
     final long[] lengths = new long[numPartitions];
+
     if (partitionWriters == null) {
-      // We were passed an empty iterator
       return lengths;
     }
 
-    final FileOutputStream out = new FileOutputStream(outputFile, true);
+    final FileOutputStream out = new FileOutputStream(outputFile, true);  // 创建增量输出流
     final long writeStartTime = System.nanoTime();
     boolean threwException = true;
     try {
       for (int i = 0; i < numPartitions; i++) {
-        final File file = partitionWriterSegments[i].file();
+        final File file = partitionWriterSegments[i].file();  // 拿到每个分区的写出文件
         if (file.exists()) {
           final FileInputStream in = new FileInputStream(file);
           boolean copyThrewException = true;
           try {
-            lengths[i] = Utils.copyStream(in, out, false, transferToEnabled);
+            lengths[i] = Utils.copyStream(in, out, false, transferToEnabled);  // 将分区文件数据拷贝到目标文件中
             copyThrewException = false;
           } finally {
             Closeables.close(in, copyThrewException);

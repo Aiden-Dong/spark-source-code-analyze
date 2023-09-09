@@ -239,6 +239,7 @@ final class ShuffleExternalSorter extends MemoryConsumer {
       //
       // When writing the last file, we pass `writeMetrics` directly to the DiskBlockObjectWriter;
       // in all other cases, we pass in a dummy write metrics to capture metrics, then copy those
+      // in all other cases, we pass in a dummy write metrics to capture metrics, then copy those
       // metrics to the true write metrics here. The reason for performing this copying is so that
       // we can avoid reporting spilled bytes as shuffle write bytes.
       //

@@ -59,7 +59,6 @@ import org.apache.spark.internal.config.package$;
 
 /*****
  *  [[UnsafeShuffleWriter]] 是 Apache Spark 中用于执行 Shuffle 操作的一部分。
- *
  *  这个类利用了Spark的Tungsten执行引擎和Unsafe内存操作来尽量减少Shuffle过程中的内存拷贝和序列化开销。
  *
  *  这里是 [[UnsafeShuffleWriter]] 的基本工作原理：
