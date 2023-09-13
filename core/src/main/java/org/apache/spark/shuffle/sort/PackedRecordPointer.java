@@ -80,6 +80,7 @@ final class PackedRecordPointer {
     // Also note that this relies on some internals of how TaskMemoryManager encodes its addresses.
     final long pageNumber = (recordPointer & MASK_LONG_UPPER_13_BITS) >>> 24;
     final long compressedAddress = pageNumber | (recordPointer & MASK_LONG_LOWER_27_BITS);
+    // 高40位位分区号 | 第 40 位是压缩地址
     return (((long) partitionId) << 40) | compressedAddress;
   }
 

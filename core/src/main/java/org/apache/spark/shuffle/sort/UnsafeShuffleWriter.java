@@ -66,7 +66,7 @@ import org.apache.spark.internal.config.package$;
  *  1. MapTask 的 Shuffle 写入阶段：
  *       - 在Map任务执行过程中，如果需要进行Shuffle，Map任务会将自己的输出数据分成多个分区，然后将每个分区的数据写入[[UnsafeShuffleWriter]]中。
  *       - [[UnsafeShuffleWriter]] 使用基于内存的数据结构来存储数据，而不是直接写入磁盘。这有助于减少磁盘写入操作的频率。
- *  2. 合并和溢写 :
+ *  2.   :
  *       - 当 "UnsafeShuffleWriter" 中的某个分区的数据量达到一定阈值时，它会触发一个合并操作，将多个小的内存分区合并成一个更大的内存分区。
  *         这有助于减少内存碎片和提高内存的利用率。
  *       - 当内存分区无法容纳更多数据时，"UnsafeShuffleWriter" 会将部分数据写入磁盘，以释放内存空间。
@@ -196,9 +196,7 @@ public class UnsafeShuffleWriter<K, V> extends ShuffleWriter<K, V> {
 
   @Override
   public void write(scala.collection.Iterator<Product2<K, V>> records) throws IOException {
-    // Keep track of success so we know if we encountered an exception
-    // We do this rather than a standard try/catch/re-throw to handle
-    // generic throwables.
+
     boolean success = false;
     try {
       while (records.hasNext()) {
@@ -287,18 +285,17 @@ public class UnsafeShuffleWriter<K, V> extends ShuffleWriter<K, V> {
     final K key = record._1();
     final int partitionId = partitioner.getPartition(key);  // 获取分区号
 
-    serBuffer.reset();  // 清空流
+    // STEP 1 : 将对象序列化
+    serBuffer.reset();
 
-    // 将对象序列化成字节
     serOutputStream.writeKey(key, OBJECT_CLASS_TAG);
     serOutputStream.writeValue(record._2(), OBJECT_CLASS_TAG);
     serOutputStream.flush();
 
-    // 序列化后的对象大小
     final int serializedRecordSize = serBuffer.size();
     assert (serializedRecordSize > 0);
 
-    // 将数据写到排序器中
+    // STEP 2 : 将序列化后的对象写入 ShuffleExternalSorter
     sorter.insertRecord(serBuffer.getBuf(), Platform.BYTE_ARRAY_OFFSET, serializedRecordSize, partitionId);
   }
 

@@ -181,7 +181,7 @@ final class BypassMergeSortShuffleWriter<K, V> extends ShuffleWriter<K, V> {
     try {
       // 将每个分区文件合并写到目标文件， 并返回每个分区的文件长度
       partitionLengths = writePartitionedFile(tmp);
-
+      // 提交 Shuffle 数据
       shuffleBlockResolver.writeIndexFileAndCommit(shuffleId, mapId, partitionLengths, tmp);
     } finally {
       if (tmp.exists() && !tmp.delete()) {
@@ -197,8 +197,7 @@ final class BypassMergeSortShuffleWriter<K, V> extends ShuffleWriter<K, V> {
   }
 
   /**
-   * 将所有分区文件连接成一个单独的组合文件。.
-   *
+   * 将所有分区文件连接成一个单独的组合文件。
    * @return 每个分区文件的长度数组，以字节为单位（由map输出跟踪器使用）。
    */
   private long[] writePartitionedFile(File outputFile) throws IOException {

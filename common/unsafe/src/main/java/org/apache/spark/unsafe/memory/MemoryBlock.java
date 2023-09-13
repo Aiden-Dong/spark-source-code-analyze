@@ -26,55 +26,58 @@ import org.apache.spark.unsafe.Platform;
  */
 public class MemoryBlock extends MemoryLocation {
 
-  /** Special `pageNumber` value for pages which were not allocated by TaskMemoryManagers */
+  /** 对于不是由TaskMemoryManagers分配的页面，有一个特殊的pageNumber值。 */
   public static final int NO_PAGE_NUMBER = -1;
 
   /**
-   * Special `pageNumber` value for marking pages that have been freed in the TaskMemoryManager.
-   * We set `pageNumber` to this value in TaskMemoryManager.freePage() so that MemoryAllocator
-   * can detect if pages which were allocated by TaskMemoryManager have been freed in the TMM
-   * before being passed to MemoryAllocator.free() (it is an error to allocate a page in
-   * TaskMemoryManager and then directly free it in a MemoryAllocator without going through
-   * the TMM freePage() call).
+   * 用于标记在TaskMemoryManager中已被释放的页面的特殊pageNumber值。
+   * 我们在TaskMemoryManager.freePage()中将pageNumber设置为这个值，
+   * 以便MemoryAllocator可以检测到TaskMemoryManager分配的页面是否在传递给MemoryAllocator.free()之前在TMM中被释放
+   * （在TaskMemoryManager中分配页面然后直接在MemoryAllocator中释放它，而不经过TMM的freePage()调用，是一个错误）。
    */
   public static final int FREED_IN_TMM_PAGE_NUMBER = -2;
 
   /**
-   * Special `pageNumber` value for pages that have been freed by the MemoryAllocator. This allows
-   * us to detect double-frees.
+   * 用于标记已经被MemoryAllocator释放的页面的特殊pageNumber值。
+   * 这允许我们检测到重复释放的情况。
    */
   public static final int FREED_IN_ALLOCATOR_PAGE_NUMBER = -3;
 
   private final long length;
 
   /**
-   * Optional page number; used when this MemoryBlock represents a page allocated by a
-   * TaskMemoryManager. This field is public so that it can be modified by the TaskMemoryManager,
-   * which lives in a different package.
+   * 可选的页面号码；当这个MemoryBlock表示由TaskMemoryManager分配的页面时使用。
+   * 这个字段是public的，以便TaskMemoryManager可以修改它，而TaskMemoryManager位于不同的包中。
    */
   public int pageNumber = NO_PAGE_NUMBER;
 
+  /***
+   * 内存块
+   * @param obj      long[]
+   * @param offset   当前偏移位置
+   * @param length   空间大小
+   */
   public MemoryBlock(@Nullable Object obj, long offset, long length) {
     super(obj, offset);
     this.length = length;
   }
 
   /**
-   * Returns the size of the memory block.
+   * 返回当前块的空间大小.
    */
   public long size() {
     return length;
   }
 
   /**
-   * Creates a memory block pointing to the memory used by the long array.
+   * 创建一个指向长整型数组使用的内存的内存块。.
    */
   public static MemoryBlock fromLongArray(final long[] array) {
     return new MemoryBlock(array, Platform.LONG_ARRAY_OFFSET, array.length * 8L);
   }
 
   /**
-   * Fills the memory block with the specified byte value.
+   * 使用指定的字节值填充内存块.
    */
   public void fill(byte value) {
     Platform.setMemory(obj, offset, length, value);

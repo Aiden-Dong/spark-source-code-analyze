@@ -57,6 +57,7 @@ private[spark] class IndexShuffleBlockResolver(
   }
 
   private def getIndexFile(shuffleId: Int, mapId: Int): File = {
+    // shuffle_{shuffleId}_{mapId}_0.index
     blockManager.diskBlockManager.getFile(ShuffleIndexBlockId(shuffleId, mapId, NOOP_REDUCE_ID))
   }
 
@@ -124,43 +125,38 @@ private[spark] class IndexShuffleBlockResolver(
     }
   }
 
-  /**
-   * Write an index file with the offsets of each block, plus a final offset at the end for the
-   * end of the output file. This will be used by getBlockData to figure out where each block
-   * begins and ends.
-   *
+  /******
    * 编写一个索引文件，其中包括每个Block的偏移量，以及文件末尾的最后偏移量，用于确定每个Block的起始位置和结束位置的位置。
-   *
-   * 它将把数据和索引文件作为一个原子操作提交，使用现有的文件，或者用新文件替换它们。
-   *
-   * Note: the `lengths` will be updated to match the existing index file if use the existing ones.
+   * 然后将临时索引文件重命名成索引文件 : shuffle_{shuffleId}_{mapId}_0.index.xxxxxxx  -> shuffle_{shuffleId}_{mapId}_0.index
+   *    将临时数据文件重命名成数据文件 : shuffle_{shuffleId}_{mapId}_0.data.xxxxxxx  -> shuffle_{shuffleId}_{mapId}_0.data
    */
   def writeIndexFileAndCommit(
       shuffleId: Int,
       mapId: Int,
       lengths: Array[Long],
       dataTmp: File): Unit = {
+
+    // 获取到索引文件
     val indexFile = getIndexFile(shuffleId, mapId)
+    // 创建索引临时文件
     val indexTmp = Utils.tempFileWith(indexFile)
     try {
+      // 获取到数据文件
       val dataFile = getDataFile(shuffleId, mapId)
-      // There is only one IndexShuffleBlockResolver per executor, this synchronization make sure
-      // the following check and rename are atomic.
+
       synchronized {
         val existingLengths = checkIndexAndDataFile(indexFile, dataFile, lengths.length)
         if (existingLengths != null) {
-          // Another attempt for the same task has already written our map outputs successfully,
-          // so just use the existing partition lengths and delete our temporary map outputs.
+          // 另一次尝试相同的任务已经成功地写入了我们的映射输出
+          // 所以只需使用现有的分区长度并删除我们的临时映射输出。
           System.arraycopy(existingLengths, 0, lengths, 0, lengths.length)
           if (dataTmp != null && dataTmp.exists()) {
             dataTmp.delete()
           }
         } else {
-          // This is the first successful attempt in writing the map outputs for this task,
-          // so override any existing index and data files with the ones we wrote.
+          // 写临时索引文件，记录每个分区的索引位置
           val out = new DataOutputStream(new BufferedOutputStream(new FileOutputStream(indexTmp)))
           Utils.tryWithSafeFinally {
-            // We take in lengths of each block, need to convert it to offsets.
             var offset = 0L
             out.writeLong(offset)
             for (length <- lengths) {
@@ -177,9 +173,11 @@ private[spark] class IndexShuffleBlockResolver(
           if (dataFile.exists()) {
             dataFile.delete()
           }
+          // 将临时索引文件重命名成索引文件
           if (!indexTmp.renameTo(indexFile)) {
             throw new IOException("fail to rename file " + indexTmp + " to " + indexFile)
           }
+          // 将临时数据文件重命名成数据文件
           if (dataTmp != null && dataTmp.exists() && !dataTmp.renameTo(dataFile)) {
             throw new IOException("fail to rename file " + dataTmp + " to " + dataFile)
           }

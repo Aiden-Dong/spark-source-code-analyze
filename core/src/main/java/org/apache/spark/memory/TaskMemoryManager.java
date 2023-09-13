@@ -351,9 +351,8 @@ public class TaskMemoryManager {
    * 只要相应的内存页尚未被释放，这个地址将保持有效。
    *
    * @param page a data page allocated by {@link TaskMemoryManager#allocatePage}/
-   * @param offsetInPage an offset in this page which incorporates the base offset. In other words,
-   *                     this should be the value that you would pass as the base offset into an
-   *                     UNSAFE call (e.g. page.baseOffset() + something).
+   * @param offsetInPage 在这个页面中的偏移量，它包含了基本偏移量。
+   *                     换句话说，这应该是您将作为基本偏移量传递给UNSAFE调用的值（例如，page.baseOffset() + something）。
    * @return an encoded page address.
    */
   public long encodePageNumberAndOffset(MemoryBlock page, long offsetInPage) {
@@ -369,6 +368,7 @@ public class TaskMemoryManager {
   @VisibleForTesting
   public static long encodePageNumberAndOffset(int pageNumber, long offsetInPage) {
     assert (pageNumber >= 0) : "encodePageNumberAndOffset called with invalid page";
+    // pageNumber 左移51位 | 页内偏移低51位
     return (((long) pageNumber) << OFFSET_BITS) | (offsetInPage & MASK_LONG_LOWER_51_BITS);
   }
 

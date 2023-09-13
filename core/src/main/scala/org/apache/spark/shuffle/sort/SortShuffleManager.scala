@@ -23,7 +23,7 @@ import org.apache.spark._
 import org.apache.spark.internal.Logging
 import org.apache.spark.shuffle._
 
-/**
+/*******************
  *
  * 在基于排序的 Shuffle 中，传入的record会根据它们的目标分区ID进行排序，然后写入单个map输出文件。
  *

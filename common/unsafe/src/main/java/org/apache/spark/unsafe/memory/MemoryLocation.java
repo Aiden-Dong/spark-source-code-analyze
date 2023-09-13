@@ -26,9 +26,8 @@ import javax.annotation.Nullable;
 public class MemoryLocation {
 
   @Nullable
-  Object obj;
-
-  long offset;
+  Object obj;      // 数据存放数据体
+  long offset;     // 当前偏移位置
 
   public MemoryLocation(@Nullable Object obj, long offset) {
     this.obj = obj;

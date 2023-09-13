@@ -73,13 +73,13 @@ final class ShuffleInMemorySorter {
     assert (initialSize > 0);
     this.initialSize = initialSize;
     this.useRadixSort = useRadixSort;
-    this.array = consumer.allocateArray(initialSize);
+    this.array = consumer.allocateArray(initialSize);  // 默认 4096
     this.usableCapacity = getUsableCapacity();
   }
 
   private int getUsableCapacity() {
-    // Radix sort requires same amount of used memory as buffer, Tim sort requires
-    // half of the used memory as buffer.
+    // 基数排序需要与缓冲区相同数量的已使用内存。
+    // Tim排序需要已使用内存的一半作为缓冲区。
     return (int) (array.size() / (useRadixSort ? 2 : 1.5));
   }
 
@@ -144,7 +144,7 @@ final class ShuffleInMemorySorter {
     if (!hasSpaceForAnotherRecord()) {
       throw new IllegalStateException("There is no space for new record");
     }
-    // 对象指针跟分区号的封装结构
+    // 对象指针跟分区号的封装结构，
     array.set(pos, PackedRecordPointer.packPointer(recordPointer, partitionId));
     pos++;
   }
@@ -175,15 +175,18 @@ final class ShuffleInMemorySorter {
     }
   }
 
-  /**
+  /***
+   * *********************************************
+   * 按照分区进行排序
    * 返回一个按照排序顺序排列的记录指针的迭代器.
+   * *********************************************
    */
   public ShuffleSorterIterator getSortedIterator() {
     int offset = 0;
     if (useRadixSort) {
       offset = RadixSort.sort(
         array, pos,
-        PackedRecordPointer.PARTITION_ID_START_BYTE_INDEX,
+        PackedRecordPointer.PARTITION_ID_START_BYTE_INDEX, // 从第5个字节开始是分区位置
         PackedRecordPointer.PARTITION_ID_END_BYTE_INDEX, false, false);
     } else {
       MemoryBlock unused = new MemoryBlock(

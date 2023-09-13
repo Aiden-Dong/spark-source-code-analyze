@@ -94,6 +94,7 @@ final class ShuffleExternalSorter extends MemoryConsumer {
    * （另一方面，如果我们在TaskMemoryManager中维护了一个可重用的页池，这可能是不必要的）。
    */
   private final LinkedList<MemoryBlock> allocatedPages = new LinkedList<>();
+  @Nullable private MemoryBlock currentPage = null;     // 指向 allocatePages 中正在被使用的一个快
 
   private final LinkedList<SpillInfo> spills = new LinkedList<>();
 
@@ -104,7 +105,7 @@ final class ShuffleExternalSorter extends MemoryConsumer {
 
   // These variables are reset after spilling:
   @Nullable private ShuffleInMemorySorter inMemSorter;  //  内存shuffle排序器
-  @Nullable private MemoryBlock currentPage = null;     // 当前正在使用的内存块
+
   private long pageCursor = -1;               // 页的当前内存位置
 
   ShuffleExternalSorter(
@@ -116,7 +117,7 @@ final class ShuffleExternalSorter extends MemoryConsumer {
       SparkConf conf,
       ShuffleWriteMetrics writeMetrics) {
     super(memoryManager,
-      (int) Math.min(PackedRecordPointer.MAXIMUM_PAGE_SIZE_BYTES, memoryManager.pageSizeBytes()),
+      (int) Math.min(PackedRecordPointer.MAXIMUM_PAGE_SIZE_BYTES, memoryManager.pageSizeBytes()),  // 128M
       memoryManager.getTungstenMemoryMode());
     this.taskMemoryManager = memoryManager;
     this.blockManager = blockManager;
@@ -171,10 +172,6 @@ final class ShuffleExternalSorter extends MemoryConsumer {
 
     final SpillInfo spillInfo = new SpillInfo(numPartitions, file, blockId);
 
-    // Unfortunately, we need a serializer instance in order to construct a DiskBlockObjectWriter.
-    // Our write path doesn't actually use this serializer (since we end up calling the `write()`
-    // OutputStream methods), but DiskBlockObjectWriter still calls some methods on it. To work
-    // around this, we pass a dummy no-op serializer.
     final SerializerInstance ser = DummySerializerInstance.INSTANCE;
 
     final DiskBlockObjectWriter writer = blockManager.getDiskWriter(blockId, file, ser, fileBufferSizeBytes, writeMetricsToUse);
@@ -190,7 +187,7 @@ final class ShuffleExternalSorter extends MemoryConsumer {
       assert (partition >= currentPartition);
 
       if (partition != currentPartition) {
-        // Switch to the new partition
+        // 切换到一个新的分区
         if (currentPartition != -1) {
           final FileSegment fileSegment = writer.commitAndGet();
           spillInfo.partitionLengths[currentPartition] = fileSegment.length();  // 记录每个分区的长度
@@ -205,7 +202,8 @@ final class ShuffleExternalSorter extends MemoryConsumer {
       int dataRemaining = UnsafeAlignedOffset.getSize(recordPage, recordOffsetInPage);
 
       long recordReadPosition = recordOffsetInPage + uaoSize; // skip over record length
-      // 将数据写出到文件
+
+      // 将对象拷贝出来，写入到文件
       while (dataRemaining > 0) {
         final int toTransfer = Math.min(diskWriteBufferSize, dataRemaining);
         Platform.copyMemory(recordPage, recordReadPosition, writeBuffer, Platform.BYTE_ARRAY_OFFSET, toTransfer);
@@ -331,17 +329,18 @@ final class ShuffleExternalSorter extends MemoryConsumer {
     }
   }
 
-  /********8
+  /********
    * 检查是否有足够的空间将额外的记录插入排序指针数组中，并在需要额外空间时扩展数组。
    * 如果无法获得所需的空间，则会将内存中的数据溢出到磁盘。
    */
   private void growPointerArrayIfNecessary() throws IOException {
     assert(inMemSorter != null);
+    // 按照记录数来算的
     if (!inMemSorter.hasSpaceForAnotherRecord()) {
       long used = inMemSorter.getMemoryUsage();
       LongArray array;
       try {
-        // could trigger spilling
+        // 申请分配两倍的数组容量
         array = allocateArray(used / 8 * 2);
       } catch (TooLargePageException e) {
         // The pointer array is too big to fix in a single page, spill.
@@ -376,17 +375,17 @@ final class ShuffleExternalSorter extends MemoryConsumer {
       pageCursor + required > currentPage.getBaseOffset() + currentPage.size() ) {
       // TODO: try to find space in previous pages
       currentPage = allocatePage(required);
-      pageCursor = currentPage.getBaseOffset();
+      pageCursor = currentPage.getBaseOffset();   // 拿到页内偏移
       allocatedPages.add(currentPage);
     }
   }
 
   /**
    * 将一个数据record写入到输入流中
-   * @param recordBase 序列化对象
-   * @param recordOffset 数据位置
-   * @param length 数据大小
-   * @param partitionId 要写入的分区
+   * @param recordBase      序列化对象， byte[]
+   * @param recordOffset    数据位置
+   * @param length          数据大小
+   * @param partitionId     当前数据对应的分区
    */
   public void insertRecord(Object recordBase, long recordOffset, int length, int partitionId)
     throws IOException {
@@ -403,9 +402,8 @@ final class ShuffleExternalSorter extends MemoryConsumer {
     // inMemSorter 内存准备
     growPointerArrayIfNecessary();
 
-    // 获取 UAO 对象大小
+    // 获取 UnsafeAlignedOffset 对象大小
     final int uaoSize = UnsafeAlignedOffset.getUaoSize();
-
     // 需求内存总大小 = 序列化对象长度 + UAO 对象大小
     final int required = length + uaoSize;
 
@@ -414,19 +412,20 @@ final class ShuffleExternalSorter extends MemoryConsumer {
 
     assert(currentPage != null);
 
-    // 拿到底层的存储对象
+    // 拿到底层的存储对象 long[]
     final Object base = currentPage.getBaseObject();
 
-    // 拿到要写入的地址
+    // 计算数据要写入的位置(用户后期数据定位): 页号左移51位 | 页内偏移低51位
     final long recordAddress = taskMemoryManager.encodePageNumberAndOffset(currentPage, pageCursor);
 
-    // 将UAO 放置到内存页中
+    // TODO : 将数据写入 currentPage 对应的块中:  [ len(recordBase) ] [recordBase]
+    // 写入序列化数据的长度
     UnsafeAlignedOffset.putSize(base, pageCursor, length);
-    pageCursor += uaoSize;
-    // 将序列化对象放置到内存页中
+    pageCursor += uaoSize; // 更新偏移位置
     Platform.copyMemory(recordBase, recordOffset, base, pageCursor, length);
     pageCursor += length;
 
+    // inMemSorter 记录数据 : 数据位置， 数据所在分区
     inMemSorter.insertRecord(recordAddress, partitionId);
   }
 
