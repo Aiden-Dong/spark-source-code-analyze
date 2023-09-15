@@ -136,7 +136,7 @@ class AppendOnlyMap[K, V](initialCapacity: Int = 64)
       haveNullValue = true
       return nullValue
     }
-    var pos = rehash(k.hashCode) & mask
+    var pos = rehash(k.hashCode) & mask // 按照key进行hash
     var i = 1
     while (true) {
       val curKey = data(2 * pos)
@@ -144,10 +144,11 @@ class AppendOnlyMap[K, V](initialCapacity: Int = 64)
         val newValue = updateFunc(false, null.asInstanceOf[V])
         data(2 * pos) = k
         data(2 * pos + 1) = newValue.asInstanceOf[AnyRef]
+        // 校验是否要扩大data容量
         incrementSize()
         return newValue
       } else if (k.eq(curKey) || k.equals(curKey)) {
-        val newValue = updateFunc(true, data(2 * pos + 1).asInstanceOf[V])
+        val newValue = updateFunc(true, data(2 * pos + 1).asInstanceOf[V]) // 更新对应的数据值
         data(2 * pos + 1) = newValue.asInstanceOf[AnyRef]
         return newValue
       } else {

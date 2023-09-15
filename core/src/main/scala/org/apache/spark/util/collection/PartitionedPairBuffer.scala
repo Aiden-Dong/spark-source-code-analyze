@@ -48,6 +48,7 @@ private[spark] class PartitionedPairBuffer[K, V](initialCapacity: Int = 64)
   def insert(partition: Int, key: K, value: V): Unit = {
     if (curSize == capacity) {
       growArray()
+      // 校验是否需要扩大数据容量
     }
     data(2 * curSize) = (partition, key.asInstanceOf[AnyRef])
     data(2 * curSize + 1) = value.asInstanceOf[AnyRef]
@@ -76,6 +77,7 @@ private[spark] class PartitionedPairBuffer[K, V](initialCapacity: Int = 64)
   /** Iterate through the data in a given order. For this class this is not really destructive. */
   override def partitionedDestructiveSortedIterator(keyComparator: Option[Comparator[K]])
     : Iterator[((Int, K), V)] = {
+    // 默认分区排序器
     val comparator = keyComparator.map(partitionKeyComparator).getOrElse(partitionComparator)
     new Sorter(new KVArraySortDataFormat[(Int, K), AnyRef]).sort(data, 0, curSize, comparator)
     iterator

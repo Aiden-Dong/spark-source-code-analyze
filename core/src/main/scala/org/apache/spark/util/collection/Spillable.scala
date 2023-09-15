@@ -48,7 +48,7 @@ private[spark] abstract class Spillable[C](taskMemoryManager: TaskMemoryManager)
   // It's used for checking spilling frequency
   protected def addElementsRead(): Unit = { _elementsRead += 1 }
 
-  // Initial threshold for the size of a collection before we start tracking its memory usage
+  // 在我们开始跟踪集合的内存使用情况之前，集合大小的初始阈值
   // For testing only
   private[this] val initialMemoryThreshold: Long =
     SparkEnv.get.conf.getLong("spark.shuffle.spill.initialMemoryThreshold", 5 * 1024 * 1024)
@@ -57,8 +57,8 @@ private[spark] abstract class Spillable[C](taskMemoryManager: TaskMemoryManager)
   private[this] val numElementsForceSpillThreshold: Int =
     SparkEnv.get.conf.get(SHUFFLE_SPILL_NUM_ELEMENTS_FORCE_SPILL_THRESHOLD)
 
-  // Threshold for this collection's size in bytes before we start tracking its memory usage
-  // To avoid a large number of small spills, initialize this to a value orders of magnitude > 0
+  // 在我们开始跟踪其内存使用情况之前，该集合的大小阈值（以字节为单位）
+  // 为了避免大量的小溢出，请将其初始化为一个数量级 > 0 的值
   @volatile private[this] var myMemoryThreshold = initialMemoryThreshold
 
   // Number of elements read from input since last spill
@@ -84,6 +84,7 @@ private[spark] abstract class Spillable[C](taskMemoryManager: TaskMemoryManager)
     if (elementsRead % 32 == 0 && currentMemory >= myMemoryThreshold) {
       // 尝试获取两倍的当前使用内存
       val amountToRequest = 2 * currentMemory - myMemoryThreshold
+      // 实际申请得到的内存资源
       val granted = acquireMemory(amountToRequest)
       myMemoryThreshold += granted
       // 如果我们被授予的内存太少而无法继续增长（无论是tryToAcquire返回0，还是我们已经拥有的内存超过了myMemoryThreshold），

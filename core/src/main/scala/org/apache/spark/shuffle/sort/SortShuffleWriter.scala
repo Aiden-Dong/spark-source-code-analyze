@@ -29,13 +29,14 @@ import org.apache.spark.util.collection.ExternalSorter
  * [[SortShuffleWriter]] 是 Apache Spark 中的一个组件，用于在 Shuffle 过程中将数据进行排序并写入磁盘。
  *
  * [[SortShuffleWriter]] 的主要作用是在 Shuffle 阶段将分区数据进行排序，然后将排序后的数据写入磁盘，以便在后续阶段进行合并和汇总操作。
- * 排序有助于提高后续的聚合操作效率，因为排序后的数据可以更快速地执行合并等操作。分区数据的排序： 首先，对每个分区的数据进行排序，通常采用外部排序算法，以确保数据有序。
+ *  - 排序有助于提高后续的聚合操作效率，因为排序后的数据可以更快速地执行合并等操作。
+ *  - 分区数据的排序： 首先，对每个分区的数据进行排序，通常采用外部排序算法，以确保数据有序。
  *
  * 具体来说，[[SortShuffleWriter]] 的主要步骤包括 :
- * - 分区数据的排序： 首先，对每个分区的数据进行排序，通常采用外部排序算法，以确保数据有序。
- * - 数据写入磁盘： 排序后的数据将被写入磁盘的临时文件中。这些临时文件将用于后续的 Shuffle 阶段。
- * - 元数据记录： 记录元数据，如每个分区的数据所在的文件位置、偏移量等信息，以便后续的 Shuffle 阶段可以正确地读取和合并数据。
- * - 溢写和合并： 如果数据量很大，可能需要进行溢写，将排序后的数据分批写入多个临时文件。后续的 Shuffle 阶段会将这些文件进行合并，以生成最终的结果。
+ *  - 分区数据的排序： 首先，对每个分区的数据进行排序，通常采用外部排序算法，以确保数据有序。
+ *  - 数据写入磁盘： 排序后的数据将被写入磁盘的临时文件中。这些临时文件将用于后续的 Shuffle 阶段。
+ *  - 元数据记录： 记录元数据，如每个分区的数据所在的文件位置、偏移量等信息，以便后续的 Shuffle 阶段可以正确地读取和合并数据。
+ *  - 溢写和合并： 如果数据量很大，可能需要进行溢写，将排序后的数据分批写入多个临时文件。后续的 Shuffle 阶段会将这些文件进行合并，以生成最终的结果。
  */
 private[spark] class SortShuffleWriter[K, V, C](
     shuffleBlockResolver: IndexShuffleBlockResolver,
@@ -62,23 +63,22 @@ private[spark] class SortShuffleWriter[K, V, C](
   override def write(records: Iterator[Product2[K, V]]): Unit = {
 
     sorter = if (dep.mapSideCombine) {
-      // 如果需要combine 操作
+      // 如果需要combine 操作，提供了key 排序跟key 合并类
       new ExternalSorter[K, V, C](context, dep.aggregator, Some(dep.partitioner), dep.keyOrdering, dep.serializer)
     } else {
       // 如果不需要combine操作
-      // In this case we pass neither an aggregator nor an ordering to the sorter, because we don't
-      // care whether the keys get sorted in each partition; that will be done on the reduce side
-      // if the operation being run is sortByKey.
+      // 在这种情况下，我们既不向排序器传递聚合器，也不向排序器传递排序，因为我们不关心每个分区中的键是否已排序；
+      // 这将在reduce方面完成
       new ExternalSorter[K, V, V](context, aggregator = None, Some(dep.partitioner), ordering = None, dep.serializer)
     }
     
     sorter.insertAll(records)
 
-    // Don't bother including the time to open the merged output file in the shuffle write time,
-    // because it just opens a single file, so is typically too fast to measure accurately
-    // (see SPARK-3570).
-    val output = shuffleBlockResolver.getDataFile(dep.shuffleId, mapId)
+    // 不必费心将打开合并输出文件的时间包含在 ShuffleWriter 时间中,
+    // 因为它只打开一个文件，所以通常速度太快而无法准确测量 (see SPARK-3570).
+    val output = shuffleBlockResolver.getDataFile(dep.shuffleId, mapId)    // shuffle_{shuffleId}_{mapId}_0.data
     val tmp = Utils.tempFileWith(output)
+
     try {
       val blockId = ShuffleBlockId(dep.shuffleId, mapId, IndexShuffleBlockResolver.NOOP_REDUCE_ID)
       val partitionLengths = sorter.writePartitionedFile(blockId, tmp)

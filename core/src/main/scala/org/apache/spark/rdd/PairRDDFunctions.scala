@@ -95,7 +95,7 @@ class PairRDDFunctions[K, V](self: RDD[(K, V)])
     if (self.partitioner == Some(partitioner)) {
       self.mapPartitions(iter => {
         val context = TaskContext.get()
-        new InterruptibleIterator(context, aggregator.combineValuesByKey(iter, context))  /
+        new InterruptibleIterator(context, aggregator.combineValuesByKey(iter, context))
       }, preservesPartitioning = true)
     } else {
       // 跨shuffle的聚合操作
