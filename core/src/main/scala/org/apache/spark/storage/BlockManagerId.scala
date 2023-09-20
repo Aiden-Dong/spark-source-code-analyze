@@ -27,12 +27,13 @@ import org.apache.spark.util.Utils
 
 /**
  * :: DeveloperApi ::
- * This class represent an unique identifier for a BlockManager.
+ * 这个类表示BlockManager的唯一标识符。
+ * BlockManager是Spark中用于管理数据块的组件。
+ * 每个BlockManager都有一个唯一的标识符，用于标识集群中的不同BlockManager实例。.
  *
- * The first 2 constructors of this class are made private to ensure that BlockManagerId objects
- * can be created only using the apply method in the companion object. This allows de-duplication
- * of ID objects. Also, constructor parameters are private to ensure that parameters cannot be
- * modified from outside this class.
+ *  这个类的前两个构造函数被设置为私有，以确保只能使用伴随对象中的apply方法创建BlockManagerId对象。
+ *  这允许对ID对象进行去重。此外，构造函数的参数也是私有的，以确保不能从类的外部修改这些参数。
+ *  这种封装性有助于维护对象的不可变性和一致性。
  */
 @DeveloperApi
 class BlockManagerId private (

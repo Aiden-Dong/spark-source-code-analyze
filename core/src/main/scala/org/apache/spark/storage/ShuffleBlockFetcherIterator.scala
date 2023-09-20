@@ -35,30 +35,37 @@ import org.apache.spark.util.Utils
 import org.apache.spark.util.io.ChunkedByteBufferOutputStream
 
 /**
- * An iterator that fetches multiple blocks. For local blocks, it fetches from the local block
- * manager. For remote blocks, it fetches them using the provided BlockTransferService.
+ * 这是一个迭代器，用于获取多个数据块。对于本地块，它从本地块管理器中获取。
+ * 对于远程块，它使用提供的BlockTransferService进行获取。
  *
- * This creates an iterator of (BlockID, InputStream) tuples so the caller can handle blocks
- * in a pipelined fashion as they are received.
+ * 这会创建一个由(BlockID，InputStream)Tuple 组成的迭代器，以便调用者可以在接收到数据块时以流水线方式处理它们。
+ * 实现中对远程获取进行了调节，以确保不超过maxBytesInFlight，以避免使用过多内存。
  *
- * The implementation throttles the remote fetches so they don't exceed maxBytesInFlight to avoid
- * using too much memory.
+ * @param context [[TaskContext]], 用来更新指标
+ * @param shuffleClient [[ShuffleClient]] 用来获取远程数据块
+ * @param blockManager [[BlockManager]] 用来读取本地块
+ * @param blocksByAddress  以[[BlockManagerId]]分组的要获取的块列表。
+ *                         对于每个块，我们还需要大小（以字节为单位的长字段）以限制内存使用。
+ *                         请注意，已经排除了大小为零的块，这是在[[MapOutputTracker.convertMapStatuses]]中发生的。
  *
- * @param context [[TaskContext]], used for metrics update
- * @param shuffleClient [[ShuffleClient]] for fetching remote blocks
- * @param blockManager [[BlockManager]] for reading local blocks
- * @param blocksByAddress list of blocks to fetch grouped by the [[BlockManagerId]].
- *                        For each block we also require the size (in bytes as a long field) in
- *                        order to throttle the memory usage. Note that zero-sized blocks are
- *                        already excluded, which happened in
- *                        [[MapOutputTracker.convertMapStatuses]].
- * @param streamWrapper A function to wrap the returned input stream.
- * @param maxBytesInFlight max size (in bytes) of remote blocks to fetch at any given point.
- * @param maxReqsInFlight max number of remote requests to fetch blocks at any given point.
- * @param maxBlocksInFlightPerAddress max number of shuffle blocks being fetched at any given point
- *                                    for a given remote host:port.
- * @param maxReqSizeShuffleToMem max size (in bytes) of a request that can be shuffled to memory.
- * @param detectCorrupt whether to detect any corruption in fetched blocks.
+ * @param streamWrapper 包装返回的输入流的函数。这允许你在读取输入流之前或之后执行一些操作，例如解压缩数据或者对数据进行其他的处理。.
+ * @param maxBytesInFlight (spark.reducer.maxSizeInFlight)
+ *                         在任何给定时刻可以获取的远程块的最大大小（以字节为单位）。
+ *                         这是为了限制在内存中使用的远程块的大小，以防止内存耗尽。.
+ * @param maxReqsInFlight (spark.reducer.maxReqsInFlight)
+ *                        在任何给定时刻可以获取的远程块的最大数量。
+ *                        这是为了限制同时进行的远程请求的数量，以避免过多的网络请求。
+ * @param maxBlocksInFlightPerAddress (spark.reducer.maxBlocksInFlightPerAddress)
+ *                                    在给定的(远程主机:端口)上的任何给定时刻可以获取的shuffle块的最大数量。
+ *                                    这是为了限制同时从特定远程主机获取的shuffle块的数量，以管理内存和网络资源的使用。
+ * @param maxReqSizeShuffleToMem  (spark.maxRemoteBlockSizeFetchToMem)
+ *                                可以被Shuffle到内存的请求的最大大小（以字节为单位）。
+ *                                这个设置通常用于控制每个Shuffle请求的大小，以便有效地使用内存资源，并防止一次请求占用过多的内存。.
+ * @param detectCorrupt (spark.shuffle.detectCorrupt)
+ *                      这个设置用于确定是否检测已获取的数据块中是否存在任何损坏。
+ *                      当启用时，Spark会对接收的数据块进行校验和验证，以确保数据的完整性。
+ *                      如果数据块损坏，Spark将会抛出异常或采取其他适当的操作来处理问题。
+ *                      这可以帮助提高数据的可靠性，但可能会增加一些额外的计算开销。.
  */
 private[spark]
 final class ShuffleBlockFetcherIterator(
@@ -77,78 +84,83 @@ final class ShuffleBlockFetcherIterator(
   import ShuffleBlockFetcherIterator._
 
   /**
-   * Total number of blocks to fetch. This should be equal to the total number of blocks
-   * in [[blocksByAddress]] because we already filter out zero-sized blocks in [[blocksByAddress]].
+   * 这个参数表示要获取的数据块的总数。通常，它应该等于[[blocksByAddress]]中数据块的总数。
+   * 在blocksByAddress中，已经过滤掉了大小为零的数据块，所以[[numBlocksToFetch]]应该反映出要获取的有效数据块的总数。
    *
-   * This should equal localBlocks.size + remoteBlocks.size.
+   * 这个参数应该等于 localBlocks.size + remoteBlocks.size。
+   * 这表示要获取的总块数，包括本地块和远程块。
    */
   private[this] var numBlocksToFetch = 0
 
   /**
-   * The number of blocks processed by the caller. The iterator is exhausted when
-   * [[numBlocksProcessed]] == [[numBlocksToFetch]].
+   * 这个参数表示调用者已经处理的块数。
+   * 当 [[numBlocksProcessed]]==[[numBlocksToFetch]]时，表示迭代器已经耗尽，所有块都已处理。
    */
   private[this] var numBlocksProcessed = 0
 
   private[this] val startTime = System.currentTimeMillis
 
-  /** Local blocks to fetch, excluding zero-sized blocks. */
+  // 本地的数据块结合， 过滤掉大小为零的数据块
   private[this] val localBlocks = scala.collection.mutable.LinkedHashSet[BlockId]()
 
-  /** Remote blocks to fetch, excluding zero-sized blocks. */
+  // 远程的数据块结合， 过滤掉大小为零的数据块
   private[this] val remoteBlocks = new HashSet[BlockId]()
 
   /**
-   * A queue to hold our results. This turns the asynchronous model provided by
-   * [[org.apache.spark.network.BlockTransferService]] into a synchronous model (iterator).
+   * 这是一个用于保存结果的队列。
+   * 它将由 [[org.apache.spark.network.BlockTransferService]] 提供的异步模型转换成同步模型（迭代器）。
    */
   private[this] val results = new LinkedBlockingQueue[FetchResult]
 
   /**
-   * Current [[FetchResult]] being processed. We track this so we can release the current buffer
-   * in case of a runtime exception when processing the current buffer.
+   * 正在处理的当前[[FetchResult]]。
+   * 我们跟踪这个信息，以便在处理当前缓冲区时出现运行时异常时释放当前缓冲区。
    */
   @volatile private[this] var currentResult: SuccessFetchResult = null
 
   /**
-   * Queue of fetch requests to issue; we'll pull requests off this gradually to make sure that
-   * the number of bytes in flight is limited to maxBytesInFlight.
+   * 要发出的获取请求队列
+   * 我们将逐渐从中获取请求，以确保在飞行中的字节数不超过maxBytesInFlight。
    */
   private[this] val fetchRequests = new Queue[FetchRequest]
 
   /**
-   * Queue of fetch requests which could not be issued the first time they were dequeued. These
-   * requests are tried again when the fetch constraints are satisfied.
+   * Queue of fetch requests which could not be issued the first time they were dequeued.
+   * 首次出队列列时无法发出的获取请求队列。
+   * These requests are tried again when the fetch constraints are satisfied.
+   * 当满足获取约束时，将再次尝试这些请求。
+   *
+   * 这是要发出的获取请求队列
+   * 我们将逐渐从中获取请求，以确保在飞行中的字节数不超过maxBytesInFlight。
    */
   private[this] val deferredFetchRequests = new HashMap[BlockManagerId, Queue[FetchRequest]]()
 
-  /** Current bytes in flight from our requests */
+  // 我们请求的当前在传输中的字节数
   private[this] var bytesInFlight = 0L
 
-  /** Current number of requests in flight */
+  // 当前正在传输中的请求数量
   private[this] var reqsInFlight = 0
 
-  /** Current number of blocks in flight per host:port */
+  // 当前每个主机:端口正在传输中的块数量。
   private[this] val numBlocksInFlightPerAddress = new HashMap[BlockManagerId, Int]()
 
   /**
-   * The blocks that can't be decompressed successfully, it is used to guarantee that we retry
-   * at most once for those corrupted blocks.
+   * 这些无法成功解压缩的块，用于确保对这些损坏的块最多重试一次。
    */
   private[this] val corruptedBlocks = mutable.HashSet[BlockId]()
 
   private[this] val shuffleMetrics = context.taskMetrics().createTempShuffleReadMetrics()
 
   /**
-   * Whether the iterator is still active. If isZombie is true, the callback interface will no
-   * longer place fetched blocks into [[results]].
+   * 这个迭代器是否仍然处于活动状态。
+   * 如果 isZombie 为 true，回调接口将不再将获取的块放入 results 中。
    */
   @GuardedBy("this")
   private[this] var isZombie = false
 
   /**
-   * A set to store the files used for shuffling remote huge blocks. Files in this set will be
-   * deleted when cleanup. This is a layer of defensiveness against disk file leaks.
+   * 用于存储用于Shuffle远程大块的文件的集合。
+   * 在清理时，将删除此集合中的文件。这是防止磁盘文件泄漏的一层保护。
    */
   @GuardedBy("this")
   private[this] val shuffleFilesSet = mutable.HashSet[DownloadFile]()
@@ -263,19 +275,22 @@ final class ShuffleBlockFetcherIterator(
   }
 
   private[this] def splitLocalRemoteBlocks(): ArrayBuffer[FetchRequest] = {
-    // Make remote requests at most maxBytesInFlight / 5 in length; the reason to keep them
-    // smaller than maxBytesInFlight is to allow multiple, parallel fetches from up to 5
-    // nodes, rather than blocking on reading output from one node.
+
+    // 确保远程请求的长度最多为 maxBytesInFlight/5。
+    // 保持长度小于maxBytesInFlight的原因是允许从最多5个节点并行获取，而不是在一个节点上读取输出时阻塞。
     val targetRequestSize = math.max(maxBytesInFlight / 5, 1L)
+
     logDebug("maxBytesInFlight: " + maxBytesInFlight + ", targetRequestSize: " + targetRequestSize
       + ", maxBlocksInFlightPerAddress: " + maxBlocksInFlightPerAddress)
 
-    // Split local and remote blocks. Remote blocks are further split into FetchRequests of size
-    // at most maxBytesInFlight in order to limit the amount of data in flight.
+    //  将本地块和远程块进行拆分。
+    //  进一步将远程块拆分成大小最多为 maxBytesInFlight 的 FetchRequest，以限制在传输中的数据量。
     val remoteRequests = new ArrayBuffer[FetchRequest]
 
     for ((address, blockInfos) <- blocksByAddress) {
       if (address.executorId == blockManager.blockManagerId.executorId) {
+
+        // 本地数据块
         blockInfos.find(_._2 <= 0) match {
           case Some((blockId, size)) if size < 0 =>
             throw new BlockException(blockId, "Negative block size " + size)
@@ -286,6 +301,8 @@ final class ShuffleBlockFetcherIterator(
         localBlocks ++= blockInfos.map(_._1)
         numBlocksToFetch += localBlocks.size
       } else {
+
+        // 远程数据块
         val iterator = blockInfos.iterator
         var curRequestSize = 0L
         var curBlocks = new ArrayBuffer[(BlockId, Long)]
@@ -301,6 +318,7 @@ final class ShuffleBlockFetcherIterator(
             numBlocksToFetch += 1
             curRequestSize += size
           }
+
           if (curRequestSize >= targetRequestSize ||
               curBlocks.size >= maxBlocksInFlightPerAddress) {
             // Add this FetchRequest
@@ -354,6 +372,7 @@ final class ShuffleBlockFetcherIterator(
     context.addTaskCompletionListener[Unit](_ => cleanup())
 
     // Split local and remote blocks.
+    // remoteRequests 包含请求的远程数据块集合
     val remoteRequests = splitLocalRemoteBlocks()
     // Add the remote requests into our queue in a random order
     fetchRequests ++= Utils.randomize(remoteRequests)
@@ -361,7 +380,8 @@ final class ShuffleBlockFetcherIterator(
       "expected reqsInFlight = 0 but found reqsInFlight = " + reqsInFlight +
       ", expected bytesInFlight = 0 but found bytesInFlight = " + bytesInFlight)
 
-    // Send out initial requests for blocks, up to our maxBytesInFlight
+    // 这个方法用于发送初始的数据块请求，最多可以发送maxBytesInFlight字节的请求数据。
+    // 这是一个流式传输的操作，它会持续发送请求直到达到指定的字节限制。
     fetchUpToMaxBytes()
 
     val numFetches = remoteRequests.size - fetchRequests.size

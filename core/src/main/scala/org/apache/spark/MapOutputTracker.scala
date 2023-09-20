@@ -287,13 +287,10 @@ private[spark] abstract class MapOutputTracker(conf: SparkConf) extends Logging 
   }
 
   /**
-   * Called from executors to get the server URIs and output sizes for each shuffle block that
-   * needs to be read from a given range of map output partitions (startPartition is included but
-   * endPartition is excluded from the range).
+   * 从Executor 调用，以获取需要从给定的Map输出分区范围[startPartition, endPartition)读取的每个洗牌块的服务器URI和输出大小。
    *
-   * @return A sequence of 2-item tuples, where the first item in the tuple is a BlockManagerId,
-   *         and the second item is a sequence of (shuffle block id, shuffle block size) tuples
-   *         describing the shuffle blocks that are stored at that block manager.
+   * @return 这是一个包含2项元组的序列，元组中的第一项是BlockManagerId，
+   *         第二项是一个包含(shuffle块id，shuffle块大小)元组的序列，描述存储在该块管理器上的shuffle块。
    */
   def getMapSizesByExecutorId(shuffleId: Int, startPartition: Int, endPartition: Int)
       : Iterator[(BlockManagerId, Seq[(BlockId, Long)])]
@@ -668,25 +665,26 @@ private[spark] class MapOutputTrackerMaster(
 }
 
 /**
- * Executor-side client for fetching map output info from the driver's MapOutputTrackerMaster.
- * Note that this is not used in local-mode; instead, local-mode Executors access the
- * MapOutputTrackerMaster directly (which is possible because the master and worker share a comon
- * superclass).
+ * Executor 端的客户端，用于从Driver程序的MapOutputTrackerMaster获取Map输出信息。
+ * 请注意，这在本地模式下不会被使用；相反，本地模式的Executor直接访问MapOutputTrackerMaster
+ * （这是可能的，因为主节点和工作节点共享一个共同的超类）。
  */
 private[spark] class MapOutputTrackerWorker(conf: SparkConf) extends MapOutputTracker(conf) {
 
-  val mapStatuses: Map[Int, Array[MapStatus]] =
-    new ConcurrentHashMap[Int, Array[MapStatus]]().asScala
+  val mapStatuses: Map[Int, Array[MapStatus]] = new ConcurrentHashMap[Int, Array[MapStatus]]().asScala
 
-  /** Remembers which map output locations are currently being fetched on an executor. */
+  // 记住当前在 Executor 上获取的 Map 输出位置。
   private val fetching = new HashSet[Int]
 
-  // Get blocks sizes by executor Id. Note that zero-sized blocks are excluded in the result.
+  //根据Executor ID获取块大小。请注意，大小为零的块在结果中被排除在外。
   override def getMapSizesByExecutorId(shuffleId: Int, startPartition: Int, endPartition: Int)
       : Iterator[(BlockManagerId, Seq[(BlockId, Long)])] = {
     logDebug(s"Fetching outputs for shuffle $shuffleId, partitions $startPartition-$endPartition")
-    val statuses = getStatuses(shuffleId)
+
+    val statuses = getStatuses(shuffleId)  // 获取当前Shuffle 的数据块位置
+
     try {
+      // 拿到每个 MapLocation 上的数据
       MapOutputTracker.convertMapStatuses(shuffleId, startPartition, endPartition, statuses)
     } catch {
       case e: MetadataFetchFailedException =>
@@ -732,7 +730,7 @@ private[spark] class MapOutputTrackerWorker(conf: SparkConf) extends MapOutputTr
         logInfo("Doing the fetch; tracker endpoint = " + trackerEndpoint)
         // This try-finally prevents hangs due to timeouts:
         try {
-          val fetchedBytes = askTracker[Array[Byte]](GetMapOutputStatuses(shuffleId))
+          val fetchedBytes = askTracker[Array[Byte]](GetMapOutputStatuses(shuffleId))  // 从 driver 端获取当前ShuffleId 的Block位置
           fetchedStatuses = MapOutputTracker.deserializeMapStatuses(fetchedBytes)
           logInfo("Got the output locations")
           mapStatuses.put(shuffleId, fetchedStatuses)
@@ -862,7 +860,7 @@ private[spark] object MapOutputTracker extends Logging {
    * @param shuffleId Identifier for the shuffle
    * @param startPartition Start of map output partition ID range (included in range)
    * @param endPartition End of map output partition ID range (excluded from range)
-   * @param statuses List of map statuses, indexed by map ID.
+   * @param statuses 当前ShuffleId 对应的Map 元信息.
    * @return A sequence of 2-item tuples, where the first item in the tuple is a BlockManagerId,
    *         and the second item is a sequence of (shuffle block ID, shuffle block size) tuples
    *         describing the shuffle blocks that are stored at that block manager.
@@ -874,12 +872,15 @@ private[spark] object MapOutputTracker extends Logging {
       statuses: Array[MapStatus]): Iterator[(BlockManagerId, Seq[(BlockId, Long)])] = {
     assert (statuses != null)
     val splitsByAddress = new HashMap[BlockManagerId, ListBuffer[(BlockId, Long)]]
+
+    // 遍历所有的MapStaus
     for ((status, mapId) <- statuses.iterator.zipWithIndex) {
       if (status == null) {
         val errorMessage = s"Missing an output location for shuffle $shuffleId"
         logError(errorMessage)
         throw new MetadataFetchFailedException(shuffleId, startPartition, errorMessage)
       } else {
+        // 遍历当前
         for (part <- startPartition until endPartition) {
           val size = status.getSizeForBlock(part)
           if (size != 0) {

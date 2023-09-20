@@ -37,11 +37,10 @@ import org.apache.spark.network.shuffle.protocol.ExecutorShuffleInfo;
 import org.apache.spark.network.shuffle.protocol.RegisterExecutor;
 import org.apache.spark.network.util.TransportConf;
 
-/**
- * Client for reading shuffle blocks which points to an external (outside of executor) server.
- * This is instead of reading shuffle blocks directly from other executors (via
- * BlockTransferService), which has the downside of losing the shuffle data if we lose the
- * executors.
+/******************************************************************
+ * 用于读取指向外部（Executor外部）服务器的 ShuffleBlock 的 Client。
+ * 这不是直接从其他Executor 读取 shuffle Block（通过 BlockTransferService）,
+ * 如果我们失去Executor，它的缺点是会丢失Shuffle数据。
  */
 public class ExternalShuffleClient extends ShuffleClient {
   private static final Logger logger = LoggerFactory.getLogger(ExternalShuffleClient.class);
@@ -98,8 +97,7 @@ public class ExternalShuffleClient extends ShuffleClient {
       RetryingBlockFetcher.BlockFetchStarter blockFetchStarter =
           (blockIds1, listener1) -> {
             TransportClient client = clientFactory.createClient(host, port);
-            new OneForOneBlockFetcher(client, appId, execId,
-              blockIds1, listener1, conf, downloadFileManager).start();
+            new OneForOneBlockFetcher(client, appId, execId, blockIds1, listener1, conf, downloadFileManager).start();
           };
 
       int maxRetries = conf.maxIORetries();
@@ -125,8 +123,8 @@ public class ExternalShuffleClient extends ShuffleClient {
   }
 
   /**
-   * Registers this executor with an external shuffle server. This registration is required to
-   * inform the shuffle server about where and how we store our shuffle files.
+   * Registers this executor with an external shuffle server.
+   * This registration is required to inform the shuffle server about where and how we store our shuffle files.
    *
    * @param host Host of shuffle server.
    * @param port Port of shuffle server.

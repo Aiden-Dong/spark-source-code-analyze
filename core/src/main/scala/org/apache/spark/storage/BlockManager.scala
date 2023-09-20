@@ -112,7 +112,7 @@ private[spark] class ByteBufferBlockData(
 }
 
 /**
- * 在每个节点（驱动程序和执行程序）上运行的管理器，它提供了将块本地和远程放入各种存储（内存、磁盘和堆外）并检索块的接口。
+ * 在每个节点（Driver和Executor）上运行的管理器，它提供了将块本地和远程放入各种存储（内存、磁盘和堆外）并检索块的接口。
  *
  * Note that [[initialize()]] must be called before the BlockManager is usable.
  */
@@ -130,8 +130,9 @@ private[spark] class BlockManager(
     numUsableCores: Int)
   extends BlockDataManager with BlockEvictionHandler with Logging {
 
-  private[spark] val externalShuffleServiceEnabled =
-    conf.get(config.SHUFFLE_SERVICE_ENABLED)
+  // spark.shuffle.service.enabled
+  private[spark] val externalShuffleServiceEnabled = conf.get(config.SHUFFLE_SERVICE_ENABLED)
+
   private val remoteReadNioBufferConversion =
     conf.getBoolean("spark.network.remoteReadNioBufferConversion", false)
 
@@ -180,13 +181,14 @@ private[spark] class BlockManager(
 
   var blockManagerId: BlockManagerId = _
 
-  // Address of the server that serves this executor's shuffle files. This is either an external
-  // service, or just our own Executor's BlockManager.
+  // 这是用于服务Executor的Shuffle文件的服务器地址。
+  // 它可以是一个外部服务，或者只是我们自己的Executor的块管理器（BlockManager）。
+  // 块管理器是Spark用于管理数据块的组件。在这个上下文中，它用于管理Shuffle文件的数据块。
   private[spark] var shuffleServerId: BlockManagerId = _
 
-  // Client to read other executors' shuffle files. This is either an external service, or just the
-  // standard BlockTransferService to directly connect to other Executors.
+  // 客户端读取其他Executor的shuffle文件。这要么是一个外部服务，要么只是直接连接到其他Executor的标准 BlockTransferService。
   private[spark] val shuffleClient = if (externalShuffleServiceEnabled) {
+    // spark.shuffle.service.enabled
     val transConf = SparkTransportConf.fromSparkConf(conf, "shuffle", numUsableCores)
     new ExternalShuffleClient(transConf, securityManager,
       securityManager.isAuthenticationEnabled(), conf.get(config.SHUFFLE_REGISTRATION_TIMEOUT))
@@ -279,6 +281,15 @@ private[spark] class BlockManager(
     }
   }
 
+  /****
+   * 这个操作是在分布式计算框架中的一部分，用于将（Executors）的配置信息注册到本地的Shuffle服务中，如果这个本地Shuffle服务存在的话。
+   *
+   * 当一个Executor启动时，它会向本地的Shuffle服务注册自己的配置信息，包括所在节点的地址、端口号等。
+   * 这个注册操作的目的是让Shuffle服务知道哪些Executor可以提供数据，以及它们的位置信息。
+   * 这样，当其他任务需要获取某个Executor的数据时，Shuffle服务就可以根据注册的信息来获取数据的位置，从而有效地进行数据交换和共享。
+   *
+   * 总之，这个操作是分布式计算框架中的一部分，用于管理和维护Executor节点的配置信息，以便更好地进行数据通信和共享。这对于提高计算性能和效率非常重要。
+   */
   private def registerWithExternalShuffleServer() {
     logInfo("Registering executor with local external shuffle service.")
     val shuffleConfig = new ExecutorShuffleInfo(

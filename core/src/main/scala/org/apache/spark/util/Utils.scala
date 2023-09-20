@@ -910,9 +910,9 @@ private[spark] object Utils extends Logging {
   }
 
   /**
-   * Shuffle the elements of a collection into a random order, returning the
-   * result in a new collection. Unlike scala.util.Random.shuffle, this method
-   * uses a local random number generator, avoiding inter-thread contention.
+   * 这个方法将集合中的元素随机排列，然后返回一个新的排列后的集合。
+   * 与scala.util.Random.shuffle不同，这个方法使用本地的随机数生成器，避免了线程间的竞争。
+   * 这有助于提高性能。
    */
   def randomize[T: ClassTag](seq: TraversableOnce[T]): Seq[T] = {
     randomizeInPlace(seq.toArray)
