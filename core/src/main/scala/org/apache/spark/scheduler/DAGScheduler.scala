@@ -1315,8 +1315,9 @@ private[spark] class DAGScheduler(
   }
 
   /**
-   * Responds to a task finishing. This is called inside the event loop so it assumes that it can
-   * modify the scheduler's internal state. Use taskEnded() to post a task end event from outside.
+   * 响应Task完成。
+   * 这个方法在事件循环内被调用，因此它假设可以修改调度器的内部状态。
+   * 如果要从外部发布任务结束事件，请使用taskEnded()方法。
    */
   private[scheduler] def handleTaskCompletion(event: CompletionEvent) {
     val task = event.task
@@ -1410,11 +1411,9 @@ private[spark] class DAGScheduler(
             if (failedEpoch.contains(execId) && smt.epoch <= failedEpoch(execId)) {
               logInfo(s"Ignoring possibly bogus $smt completion from executor $execId")
             } else {
-              // The epoch of the task is acceptable (i.e., the task was launched after the most
-              // recent failure we're aware of for the executor), so mark the task's output as
-              // available.
-              mapOutputTracker.registerMapOutput(
-                shuffleStage.shuffleDep.shuffleId, smt.partitionId, status)
+
+              // 标记当前的 Shuffle 对应的Map数据时可用的
+              mapOutputTracker.registerMapOutput(shuffleStage.shuffleDep.shuffleId, smt.partitionId, status)
             }
 
             if (runningStages.contains(shuffleStage) && shuffleStage.pendingPartitions.isEmpty) {

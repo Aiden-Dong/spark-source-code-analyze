@@ -30,22 +30,16 @@ import org.apache.spark.storage.BlockManagerId
 import org.apache.spark.util.Utils
 
 /**
- * Result returned by a ShuffleMapTask to a scheduler. Includes the block manager address that the
- * task ran on as well as the sizes of outputs for each reducer, for passing on to the reduce tasks.
+ * 由ShuffleMapTask返回给调度器的结果.
+ * 包括任务运行的块管理器地址以及每个reduce任务的输出大小，以传递给Reduce任务。
  */
 private[spark] sealed trait MapStatus {
-  /** Location where this task was run. */
+  // 当前MapTask Shuffle 的数据位置: ip : port，executorId 等信息
   def location: BlockManagerId
 
-  /**
-   * Estimated size for the reduce block, in bytes.
-   *
-   * If a block is non-empty, then this method MUST return a non-zero size.  This invariant is
-   * necessary for correctness, since block fetchers are allowed to skip zero-size blocks.
-   */
+  // 返回当前MapTask 对应Reduce的分区数据大小
   def getSizeForBlock(reduceId: Int): Long
 }
-
 
 private[spark] object MapStatus {
 

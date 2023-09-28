@@ -283,8 +283,8 @@ final class ShuffleBlockFetcherIterator(
     logDebug("maxBytesInFlight: " + maxBytesInFlight + ", targetRequestSize: " + targetRequestSize
       + ", maxBlocksInFlightPerAddress: " + maxBlocksInFlightPerAddress)
 
-    //  将本地块和远程块进行拆分。
-    //  进一步将远程块拆分成大小最多为 maxBytesInFlight 的 FetchRequest，以限制在传输中的数据量。
+    // 将本地块和远程块进行拆分。
+    // 进一步将远程块拆分成大小最多为 maxBytesInFlight 的 FetchRequest，以限制在传输中的数据量。
     val remoteRequests = new ArrayBuffer[FetchRequest]
 
     for ((address, blockInfos) <- blocksByAddress) {
@@ -341,9 +341,8 @@ final class ShuffleBlockFetcherIterator(
   }
 
   /**
-   * Fetch the local blocks while we are fetching remote blocks. This is ok because
-   * `ManagedBuffer`'s memory is allocated lazily when we create the input stream, so all we
-   * track in-memory are the ManagedBuffer references themselves.
+   * 在获取远程块的同时获取本地块。
+   * 这是可以的，因为在创建输入流时，ManagedBuffer的内存是懒加载分配的，因此我们在内存中跟踪的只是ManagedBuffer的引用本身。
    */
   private[this] def fetchLocalBlocks() {
     logDebug(s"Start fetching local blocks: ${localBlocks.mkString(", ")}")
@@ -355,8 +354,7 @@ final class ShuffleBlockFetcherIterator(
         shuffleMetrics.incLocalBlocksFetched(1)
         shuffleMetrics.incLocalBytesRead(buf.size)
         buf.retain()
-        results.put(new SuccessFetchResult(blockId, blockManager.blockManagerId,
-          buf.size(), buf, false))
+        results.put(new SuccessFetchResult(blockId, blockManager.blockManagerId,  buf.size(), buf, false))
       } catch {
         case e: Exception =>
           // If we see an exception, stop immediately.
@@ -395,10 +393,10 @@ final class ShuffleBlockFetcherIterator(
   override def hasNext: Boolean = numBlocksProcessed < numBlocksToFetch
 
   /**
-   * Fetches the next (BlockId, InputStream). If a task fails, the ManagedBuffers
-   * underlying each InputStream will be freed by the cleanup() method registered with the
-   * TaskCompletionListener. However, callers should close() these InputStreams
-   * as soon as they are no longer needed, in order to release memory as early as possible.
+   * 获取下一个（BlockId，InputStream）。
+   *
+   * 如果任务失败，每个InputStream下面的ManagedBuffers将由注册在TaskCompletionListener中的cleanup()方法释放。
+   * 然而，调用方应该在不再需要这些InputStreams时尽快关闭()它们，以便尽早释放内存。
    *
    * Throws a FetchFailedException if the next block could not be fetched.
    */
@@ -411,13 +409,13 @@ final class ShuffleBlockFetcherIterator(
 
     var result: FetchResult = null
     var input: InputStream = null
-    // Take the next fetched result and try to decompress it to detect data corruption,
-    // then fetch it one more time if it's corrupt, throw FailureFetchResult if the second fetch
-    // is also corrupt, so the previous stage could be retried.
-    // For local shuffle block, throw FailureFetchResult for the first IOException.
+    // 取出下一个获取的结果并尝试解压缩以检测数据是否损坏，如果数据损坏，则再次获取一次。
+    // 如果第二次获取仍然损坏，则抛出FailureFetchResult异常，以便可以重试前一阶段。
+    // 对于本地的 Shuffle 块，第一次出现 IOException 就抛出 FailureFetchResult 异常。
+    // 这段代码的作用是确保获取的数据是完整和正确的，如果出现问题，可以进行适当的处理和重试。
     while (result == null) {
       val startFetchWait = System.currentTimeMillis()
-      result = results.take()
+      result = results.take()  // 取出一个数据来
       val stopFetchWait = System.currentTimeMillis()
       shuffleMetrics.incFetchWaitTime(stopFetchWait - startFetchWait)
 
@@ -485,8 +483,7 @@ final class ShuffleBlockFetcherIterator(
           } catch {
             case e: IOException =>
               buf.release()
-              if (buf.isInstanceOf[FileSegmentManagedBuffer]
-                || corruptedBlocks.contains(blockId)) {
+              if (buf.isInstanceOf[FileSegmentManagedBuffer] || corruptedBlocks.contains(blockId)) {
                 throwFetchFailedException(blockId, address, e)
               } else {
                 logWarning(s"got an corrupted block $blockId from $address, fetch again", e)
@@ -514,10 +511,10 @@ final class ShuffleBlockFetcherIterator(
   }
 
   private def fetchUpToMaxBytes(): Unit = {
-    // Send fetch requests up to maxBytesInFlight. If you cannot fetch from a remote host
-    // immediately, defer the request until the next time it can be processed.
+    // 发送最多 maxBytesInFlight 的获取请求.
+    // 如果您无法立即从远程主机获取数据，请推迟该请求，直到下次可以处理该请求。
 
-    // Process any outstanding deferred fetch requests if possible.
+    // 如果可能，处理任何未完成的延迟获取请求。
     if (deferredFetchRequests.nonEmpty) {
       for ((remoteAddress, defReqQueue) <- deferredFetchRequests) {
         while (isRemoteBlockFetchable(defReqQueue) &&
@@ -533,7 +530,7 @@ final class ShuffleBlockFetcherIterator(
       }
     }
 
-    // Process any regular fetch requests if possible.
+    // 如果可能的话，处理任何常规的获取请求.
     while (isRemoteBlockFetchable(fetchRequests)) {
       val request = fetchRequests.dequeue()
       val remoteAddress = request.address
@@ -547,6 +544,7 @@ final class ShuffleBlockFetcherIterator(
       }
     }
 
+    // 向远程请求发送数据
     def send(remoteAddress: BlockManagerId, request: FetchRequest): Unit = {
       sendRequest(request)
       numBlocksInFlightPerAddress(remoteAddress) =

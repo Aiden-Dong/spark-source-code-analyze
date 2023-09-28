@@ -44,6 +44,8 @@ private[spark] class BlockStoreShuffleReader[K, C](
 
   // 读取此Reduce任务的合并键值。
   override def read(): Iterator[Product2[K, C]] = {
+
+    // TODO 1  : 从 Shuffle 数据源端拉取数据，构建 Iterator
     val wrappedStreams = new ShuffleBlockFetcherIterator(
       context,
       blockManager.shuffleClient,   // Shuffle Client
@@ -78,6 +80,7 @@ private[spark] class BlockStoreShuffleReader[K, C](
     // 这里必须使用可中断的迭代器，以支持任务取消。
     val interruptibleIter = new InterruptibleIterator[(Any, Any)](context, metricIter)
 
+    // TODO 2 : 如果存在聚合函数， 则使用聚合函数聚合
     val aggregatedIter: Iterator[Product2[K, C]] = if (dep.aggregator.isDefined) {
       if (dep.mapSideCombine) {
         // 我们正在读取已经合并的值。
@@ -97,9 +100,10 @@ private[spark] class BlockStoreShuffleReader[K, C](
     val resultIter = dep.keyOrdering match {
       case Some(keyOrd: Ordering[K]) =>
         // Create an ExternalSorter to sort the data.
-        val sorter =
-          new ExternalSorter[K, C, C](context, ordering = Some(keyOrd), serializer = dep.serializer)
+        val sorter = new ExternalSorter[K, C, C](context, ordering = Some(keyOrd), serializer = dep.serializer)
+
         sorter.insertAll(aggregatedIter)
+
         context.taskMetrics().incMemoryBytesSpilled(sorter.memoryBytesSpilled)
         context.taskMetrics().incDiskBytesSpilled(sorter.diskBytesSpilled)
         context.taskMetrics().incPeakExecutionMemory(sorter.peakMemoryUsedBytes)
@@ -107,6 +111,7 @@ private[spark] class BlockStoreShuffleReader[K, C](
         context.addTaskCompletionListener[Unit](_ => {
           sorter.stop()
         })
+
         CompletionIterator[Product2[K, C], Iterator[Product2[K, C]]](sorter.iterator, sorter.stop())
       case None =>
         aggregatedIter
