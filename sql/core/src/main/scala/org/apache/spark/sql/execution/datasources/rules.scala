@@ -331,8 +331,7 @@ case class PreprocessTableInsertion(conf: SQLConf) extends Rule[LogicalPlan] {
       tblName: String,
       partColNames: Seq[String]): InsertIntoTable = {
 
-    val normalizedPartSpec = PartitioningUtils.normalizePartitionSpec(
-      insert.partition, partColNames, tblName, conf.resolver)
+    val normalizedPartSpec = PartitioningUtils.normalizePartitionSpec(insert.partition, partColNames, tblName, conf.resolver)
 
     val staticPartCols = normalizedPartSpec.filter(_._2.isDefined).keySet
     val expectedColumns = insert.table.output.filterNot(a => staticPartCols.contains(a.name))
@@ -345,8 +344,9 @@ case class PreprocessTableInsertion(conf: SQLConf) extends Rule[LogicalPlan] {
           s"including ${staticPartCols.size} partition column(s) having constant value(s).")
     }
 
-    val newQuery = DDLPreprocessingUtils.castAndRenameQueryOutput(
-      insert.query, expectedColumns, conf)
+    // 保证子查询列名跟目标列名相同
+    val newQuery = DDLPreprocessingUtils.castAndRenameQueryOutput(insert.query, expectedColumns, conf)
+
     if (normalizedPartSpec.nonEmpty) {
       if (normalizedPartSpec.size != partColNames.length) {
         throw new AnalysisException(
@@ -480,7 +480,7 @@ object PreWriteCheck extends (LogicalPlan => Unit) {
 object DDLPreprocessingUtils {
 
   /**
-   * Adjusts the name and data type of the input query output columns, to match the expectation.
+   * 将子查询列名跟目标查询列名对齐，保证名称跟类型相同
    */
   def castAndRenameQueryOutput(
       query: LogicalPlan,
