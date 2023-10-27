@@ -36,20 +36,22 @@ import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.MutablePair
 import org.apache.spark.util.collection.unsafe.sort.{PrefixComparators, RecordComparator}
 
-/**
- * Performs a shuffle that will result in the desired `newPartitioning`.
+/****************************************************
+ * 执行一个将产生所需 newPartitioning 的 Shuffle 。
+ * @param newPartitioning 分区分布
+ * @param child 子查询树
  */
 case class ShuffleExchangeExec(
     var newPartitioning: Partitioning,
     child: SparkPlan,
     @transient coordinator: Option[ExchangeCoordinator]) extends Exchange {
 
-  // NOTE: coordinator can be null after serialization/deserialization,
-  //       e.g. it can be null on the Executor side
+  // NOTE: 在序列化和反序列化之后，coordinator可能为空。,
 
-  override lazy val metrics = Map(
-    "dataSize" -> SQLMetrics.createSizeMetric(sparkContext, "data size"))
+  // 统计数据大小指标
+  override lazy val metrics = Map("dataSize" -> SQLMetrics.createSizeMetric(sparkContext, "data size"))
 
+  // 节点名称
   override def nodeName: String = {
     val extraInfo = coordinator match {
       case Some(exchangeCoordinator) =>
@@ -61,20 +63,18 @@ case class ShuffleExchangeExec(
     s"$simpleNodeName$extraInfo"
   }
 
+  // 新的分区分布
   override def outputPartitioning: Partitioning = newPartitioning
 
+  // 序列化器
   private val serializer: Serializer =
     new UnsafeRowSerializer(child.output.size, longMetric("dataSize"))
 
   override protected def doPrepare(): Unit = {
-    // If an ExchangeCoordinator is needed, we register this Exchange operator
-    // to the coordinator when we do prepare. It is important to make sure
-    // we register this operator right before the execution instead of register it
-    // in the constructor because it is possible that we create new instances of
-    // Exchange operators when we transform the physical plan
-    // (then the ExchangeCoordinator will hold references of unneeded Exchanges).
-    // So, we should only call registerExchange just before we start to execute
-    // the plan.
+    // 如果需要[[ExchangeCoordinator]]，我们在执行prepare操作时将此Exchange操作符注册到ExchangeCoordinator。
+    // 重要的是确保我们在执行前注册此操作符，而不是在构造函数中注册，
+    // 因为在转换物理计划时可能会创建新的Exchange操作符实例（然后ExchangeCoordinator将持有不需要的Exchange的引用）。
+    // 因此，我们应该在执行计划之前只在即将开始执行时调用registerExchange。这段代码强调了在何时注册Exchange操作符以确保协调工作的正确性。
     coordinator match {
       case Some(exchangeCoordinator) => exchangeCoordinator.registerExchange(this)
       case _ =>
@@ -82,28 +82,25 @@ case class ShuffleExchangeExec(
   }
 
   /**
-   * Returns a [[ShuffleDependency]] that will partition rows of its child based on
-   * the partitioning scheme defined in `newPartitioning`. Those partitions of
-   * the returned ShuffleDependency will be the input of shuffle.
+   * 返回一个[[ShuffleDependency]]，该 dependency 将根据newPartitioning中定义的分区方案，对其子级的行进行分区。
+   * 返回的[[ShuffleDependency]]的这些分区将成为Shuffle的输入。
    */
-  private[exchange] def prepareShuffleDependency()
-    : ShuffleDependency[Int, InternalRow, InternalRow] = {
+  private[exchange] def prepareShuffleDependency() : ShuffleDependency[Int, InternalRow, InternalRow] = {
     ShuffleExchangeExec.prepareShuffleDependency(
       child.execute(), child.output, newPartitioning, serializer)
   }
 
   /**
-   * Returns a [[ShuffledRowRDD]] that represents the post-shuffle dataset.
-   * This [[ShuffledRowRDD]] is created based on a given [[ShuffleDependency]] and an optional
-   * partition start indices array. If this optional array is defined, the returned
-   * [[ShuffledRowRDD]] will fetch pre-shuffle partitions based on indices of this array.
+   * 返回一个表示Shuffle后数据集的[[ShuffledRowRDD]]。
+   * 这个[[ShuffledRowRDD]]是基于给定的[[ShuffleDependency]]和可选的分区起始索引数组创建的。
+   * 如果定义了这个可选数组，返回的[[ShuffledRowRDD]]将根据该数组的索引获取Shuffle前的分区。
    */
   private[exchange] def preparePostShuffleRDD(
       shuffleDependency: ShuffleDependency[Int, InternalRow, InternalRow],
       specifiedPartitionStartIndices: Option[Array[Int]] = None): ShuffledRowRDD = {
-    // If an array of partition start indices is provided, we need to use this array
-    // to create the ShuffledRowRDD. Also, we need to update newPartitioning to
-    // update the number of post-shuffle partitions.
+    // 如果提供了一个分区起始索引数组，我们需要使用这个数组来创建ShuffledRowRDD。
+    // 此外，我们需要更新newPartitioning来更新洗牌后的分区数量。
+    // 这段代码强调了在特定情况下更新ShuffledRowRDD和newPartitioning的必要性。
     specifiedPartitionStartIndices.foreach { indices =>
       assert(newPartitioning.isInstanceOf[HashPartitioning])
       newPartitioning = UnknownPartitioning(indices.length)
@@ -112,19 +109,22 @@ case class ShuffleExchangeExec(
   }
 
   /**
-   * Caches the created ShuffleRowRDD so we can reuse that.
+   * 缓存创建的ShuffleRowRDD，以便我们可以重复使用它。.
    */
   private var cachedShuffleRDD: ShuffledRowRDD = null
 
   protected override def doExecute(): RDD[InternalRow] = attachTree(this, "execute") {
-    // Returns the same ShuffleRowRDD if this plan is used by multiple plans.
+    // 如果多个计划使用相同的计划，则返回相同的ShuffleRowRDD。
+    // 这可以用来避免重复创建相同的ShuffleRowRDD实例，以提高性能和减少资源消耗。
     if (cachedShuffleRDD == null) {
       cachedShuffleRDD = coordinator match {
         case Some(exchangeCoordinator) =>
+          // 存在 coordinator 的情况下，使用 coordinator 构造产生 ShuffleRDD
           val shuffleRDD = exchangeCoordinator.postShuffleRDD(this)
           assert(shuffleRDD.partitions.length == newPartitioning.numPartitions)
           shuffleRDD
         case _ =>
+          // 默认情况下，没有定义 Coordinator 的默认构造器
           val shuffleDependency = prepareShuffleDependency()
           preparePostShuffleRDD(shuffleDependency)
       }
@@ -139,27 +139,21 @@ object ShuffleExchangeExec {
   }
 
   /**
-   * Determines whether records must be defensively copied before being sent to the shuffle.
-   * Several of Spark's shuffle components will buffer deserialized Java objects in memory. The
-   * shuffle code assumes that objects are immutable and hence does not perform its own defensive
-   * copying. In Spark SQL, however, operators' iterators return the same mutable `Row` object. In
-   * order to properly shuffle the output of these operators, we need to perform our own copying
-   * prior to sending records to the shuffle. This copying is expensive, so we try to avoid it
-   * whenever possible. This method encapsulates the logic for choosing when to copy.
+   * 确定在将记录发送到Shuffle之前是否必须进行防御性拷贝。Spark的多个Shuffle组件会在内存中缓冲反序列化的Java对象。
+   * Shuffle代码假定对象是不可变的，因此不执行自己的防御性拷贝。但是，在Spark SQL中，操作符的迭代器返回相同的可变Row对象。
+   * 为了正确洗牌这些操作符的输出，我们需要在将记录发送到Shuffle之前执行我们自己的拷贝。
+   * 这种拷贝代价高昂，因此我们尽量避免它。这个方法封装了选择何时进行拷贝的逻辑。
+   * 从长远来看，我们可能希望将这个逻辑推到核心的Shuffle API中，这样我们就不必依赖于此处对核心内部的了解。
    *
-   * In the long run, we might want to push this logic into core's shuffle APIs so that we don't
-   * have to rely on knowledge of core internals here in SQL.
-   *
-   * See SPARK-2967, SPARK-4479, and SPARK-7375 for more discussion of this issue.
+   * 关于这个问题的更多讨论，请参见SPARK-2967、SPARK-4479和SPARK-7375。
    *
    * @param partitioner the partitioner for the shuffle
    * @return true if rows should be copied before being shuffled, false otherwise
    */
   private def needToCopyObjectsBeforeShuffle(partitioner: Partitioner): Boolean = {
-    // Note: even though we only use the partitioner's `numPartitions` field, we require it to be
-    // passed instead of directly passing the number of partitions in order to guard against
-    // corner-cases where a partitioner constructed with `numPartitions` partitions may output
-    // fewer partitions (like RangePartitioner, for example).
+    // 请注意，尽管我们只使用分区器的numPartitions字段，但我们要求传递分区器而不是直接传递分区数，以防止出现某些特殊情况，
+    // 其中使用numPartitions分区构造的分区器可能会输出较少的分区（例如，像RangePartitioner）。
+    // 这段代码强调了为了应对潜在的特殊情况，需要传递分区器而不是分区数。
     val conf = SparkEnv.get.conf
     val shuffleManager = SparkEnv.get.shuffleManager
     val sortBasedShuffleOn = shuffleManager.isInstanceOf[SortShuffleManager]
@@ -167,10 +161,9 @@ object ShuffleExchangeExec {
     val numParts = partitioner.numPartitions
     if (sortBasedShuffleOn) {
       if (numParts <= bypassMergeThreshold) {
-        // If we're using the original SortShuffleManager and the number of output partitions is
-        // sufficiently small, then Spark will fall back to the hash-based shuffle write path, which
-        // doesn't buffer deserialized records.
-        // Note that we'll have to remove this case if we fix SPARK-6026 and remove this bypass.
+        // 如果我们使用原始的SortShuffleManager并且输出分区的数量足够小，那么Spark会退回到基于哈希的洗牌写路径，该路径不会缓冲反序列化的记录。
+        // 请注意，如果我们解决SPARK-6026并删除此绕过路径，我们将不得不删除这种情况。
+        // 这段代码强调了Spark在某些情况下会选择不同的洗牌写入路径，具体取决于分区数量。
         false
       } else if (numParts <= SortShuffleManager.MAX_SHUFFLE_OUTPUT_PARTITIONS_FOR_SERIALIZED_MODE) {
         // SPARK-4550 and  SPARK-7081 extended sort-based shuffle to serialize individual records
@@ -195,9 +188,15 @@ object ShuffleExchangeExec {
   }
 
   /**
-   * Returns a [[ShuffleDependency]] that will partition rows of its child based on
-   * the partitioning scheme defined in `newPartitioning`. Those partitions of
-   * the returned ShuffleDependency will be the input of shuffle.
+   * ************************************************************
+   * 返回一个[[ShuffleDependency]]，该依赖将根据newPartitioning中定义的分区方案对其子级的行进行分区。
+   * 返回的ShuffleDependency的这些分区将成为Shuffle的输入。
+   *
+   * @param rdd 上游依赖RDD
+   * @param outputAttributes 输出字段
+   * @param newPartitioning 新的分区信息
+   * @param serializer 序列化工具
+   * *******************************************************
    */
   def prepareShuffleDependency(
       rdd: RDD[InternalRow],
@@ -205,23 +204,25 @@ object ShuffleExchangeExec {
       newPartitioning: Partitioning,
       serializer: Serializer): ShuffleDependency[Int, InternalRow, InternalRow] = {
 
+    // 获取分区器
     val part: Partitioner = newPartitioning match {
       case RoundRobinPartitioning(numPartitions) => new HashPartitioner(numPartitions)
       case HashPartitioning(_, n) =>
         new Partitioner {
           override def numPartitions: Int = n
-          // For HashPartitioning, the partitioning key is already a valid partition ID, as we use
-          // `HashPartitioning.partitionIdExpression` to produce partitioning key.
+          // 对于HashPartitioning，分区键已经是有效的分区ID，
+          // 因为我们使用HashPartitioning.partitionIdExpression来生成分区键。
           override def getPartition(key: Any): Int = key.asInstanceOf[Int]
         }
       case RangePartitioning(sortingExpressions, numPartitions) =>
-        // Internally, RangePartitioner runs a job on the RDD that samples keys to compute
-        // partition bounds. To get accurate samples, we need to copy the mutable keys.
+        // 在内部，RangePartitioner在RDD上运行一个作业来对键进行采样以计算分区边界。
+        // 为了获取准确的样本，我们需要复制可变的键。
         val rddForSampling = rdd.mapPartitionsInternal { iter =>
           val mutablePair = new MutablePair[InternalRow, Null]()
           iter.map(row => mutablePair.update(row.copy(), null))
         }
         implicit val ordering = new LazilyGeneratedOrdering(sortingExpressions, outputAttributes)
+
         new RangePartitioner(
           numPartitions,
           rddForSampling,
@@ -235,6 +236,8 @@ object ShuffleExchangeExec {
       case _ => sys.error(s"Exchange not implemented for $newPartitioning")
       // TODO: Handle BroadcastPartitioning.
     }
+
+    // 定义获取分区方法
     def getPartitionKeyExtractor(): InternalRow => Any = newPartitioning match {
       case RoundRobinPartitioning(numPartitions) =>
         // Distributes elements evenly across output partitions, starting from a random partition.
@@ -254,26 +257,22 @@ object ShuffleExchangeExec {
     val isRoundRobin = newPartitioning.isInstanceOf[RoundRobinPartitioning] &&
       newPartitioning.numPartitions > 1
 
+
     val rddWithPartitionIds: RDD[Product2[Int, InternalRow]] = {
-      // [SPARK-23207] Have to make sure the generated RoundRobinPartitioning is deterministic,
-      // otherwise a retry task may output different rows and thus lead to data loss.
-      //
-      // Currently we following the most straight-forward way that perform a local sort before
-      // partitioning.
-      //
-      // Note that we don't perform local sort if the new partitioning has only 1 partition, under
-      // that case all output rows go to the same partition.
+
+      // 必须确保生成的RoundRobinPartitioning是确定性的，否则重试任务可能会输出不同的行，从而导致数据丢失。
+      // 目前，我们遵循了最直接的方法，在分区之前执行本地排序。
+      // 请注意，如果新的分区方案只有1个分区，我们就不执行本地排序，在这种情况下，所有输出行都进入同一个分区。
+      // 这段代码强调了确保 RoundRobinPartitioning 的确定性以防止数据丢失的必要性。
       val newRdd = if (isRoundRobin && SQLConf.get.sortBeforeRepartition) {
         rdd.mapPartitionsInternal { iter =>
           val recordComparatorSupplier = new Supplier[RecordComparator] {
             override def get: RecordComparator = new RecordBinaryComparator()
           }
-          // The comparator for comparing row hashcode, which should always be Integer.
+          // 用于比较行哈希码的比较器，它应该始终是整数（Integer）。
           val prefixComparator = PrefixComparators.LONG
           val canUseRadixSort = SparkEnv.get.conf.get(SQLConf.RADIX_SORT_ENABLED)
-          // The prefix computer generates row hashcode as the prefix, so we may decrease the
-          // probability that the prefixes are equal when input rows choose column values from a
-          // limited range.
+          // 前缀计算器生成行的哈希码作为前缀，因此当输入行从有限范围中选择列值时，可以减少前缀相等的概率。
           val prefixComputer = new UnsafeExternalRowSorter.PrefixComputer {
             private val result = new UnsafeExternalRowSorter.PrefixComputer.Prefix
             override def computePrefix(row: InternalRow):
@@ -299,7 +298,7 @@ object ShuffleExchangeExec {
         rdd
       }
 
-      // round-robin function is order sensitive if we don't sort the input.
+      // 如果我们不对输入进行排序，Round-Robin函数是有序敏感的.
       val isOrderSensitive = isRoundRobin && !SQLConf.get.sortBeforeRepartition
       if (needToCopyObjectsBeforeShuffle(part)) {
         newRdd.mapPartitionsWithIndexInternal((_, iter) => {
@@ -308,18 +307,17 @@ object ShuffleExchangeExec {
         }, isOrderSensitive = isOrderSensitive)
       } else {
         newRdd.mapPartitionsWithIndexInternal((_, iter) => {
-          val getPartitionKey = getPartitionKeyExtractor()
+          val getPartitionKey = getPartitionKeyExtractor()        //获取key分区器
           val mutablePair = new MutablePair[Int, InternalRow]()
           iter.map { row => mutablePair.update(part.getPartition(getPartitionKey(row)), row) }
         }, isOrderSensitive = isOrderSensitive)
       }
     }
 
-    // Now, we manually create a ShuffleDependency. Because pairs in rddWithPartitionIds
-    // are in the form of (partitionId, row) and every partitionId is in the expected range
-    // [0, part.numPartitions - 1]. The partitioner of this is a PartitionIdPassthrough.
-    val dependency =
-      new ShuffleDependency[Int, InternalRow, InternalRow](
+    // 现在，我们手动创建一个ShuffleDependency。
+    // 因为rddWithPartitionIds中的数据对是（partitionId，row）的形式，而且每个partitionId都在期望的范围内[0, part.numPartitions-1]。
+    // 这个ShuffleDependency的分区器是 PartitionIdPassthrough。
+    val dependency = new ShuffleDependency[Int, InternalRow, InternalRow](
         rddWithPartitionIds,
         new PartitionIdPassthrough(part.numPartitions),
         serializer)

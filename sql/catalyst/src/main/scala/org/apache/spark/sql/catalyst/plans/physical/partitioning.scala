@@ -152,34 +152,32 @@ case class BroadcastDistribution(mode: BroadcastMode) extends Distribution {
 }
 
 /**
- * Describes how an operator's output is split across partitions. It has 2 major properties:
- *   1. number of partitions.
- *   2. if it can satisfy a given distribution.
+ * 描述算子输出如何分布在各个分区上的属性 ：
+ *   1. 多少个分区
+ *   2. 是否能满足给定的分布
  */
 trait Partitioning {
-  /** Returns the number of partitions that the data is split across */
+
+  // 返回数据分割成的分区数量。
   val numPartitions: Int
 
   /**
-   * Returns true iff the guarantees made by this [[Partitioning]] are sufficient
-   * to satisfy the partitioning scheme mandated by the `required` [[Distribution]],
-   * i.e. the current dataset does not need to be re-partitioned for the `required`
-   * Distribution (it is possible that tuples within a partition need to be reorganized).
+   * 当且仅当该[[Partitioning]]提供的保证足以满足required[[Distribution]]规定的分区方案时，返回true。
+   * 也就是说，当前数据集不需要为required Distribution重新分区（可能需要重新组织分区内的元组）。
    *
-   * A [[Partitioning]] can never satisfy a [[Distribution]] if its `numPartitions` does't match
-   * [[Distribution.requiredNumPartitions]].
+   * 如果[[Partitioning]]的numPartitions与[[Distribution.requiredNumPartitions]]不匹配，
+   * 那么[[Partitioning]]永远无法满足[[Distribution]]的要求。
    */
   final def satisfies(required: Distribution): Boolean = {
     required.requiredNumPartitions.forall(_ == numPartitions) && satisfies0(required)
   }
 
   /**
-   * The actual method that defines whether this [[Partitioning]] can satisfy the given
-   * [[Distribution]], after the `numPartitions` check.
+   * 这个实际的方法定义了在numPartitions检查之后，[[Partitioning]]是否能够满足给定的[[Distribution]]。
    *
-   * By default a [[Partitioning]] can satisfy [[UnspecifiedDistribution]], and [[AllTuples]] if
-   * the [[Partitioning]] only have one partition. Implementations can also overwrite this method
-   * with special logic.
+   * 默认情况下，[[Partitioning]]可以满足[[UnspecifiedDistribution]]，
+   * 以及如果[[Partitioning]]只有一个分区的话，也可以满足[[AllTuples]]。
+   * 实现也可以使用特殊逻辑覆盖此方法。
    */
   protected def satisfies0(required: Distribution): Boolean = required match {
     case UnspecifiedDistribution => true
