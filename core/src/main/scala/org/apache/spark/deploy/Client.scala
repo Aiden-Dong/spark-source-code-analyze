@@ -209,7 +209,7 @@ private class ClientEndpoint(
 /**
  * Executable utility for starting and terminating drivers inside of a standalone cluster.
  */
-object Client {
+object geiClient {
   def main(args: Array[String]) {
     // scalastyle:off println
     if (!sys.props.contains("SPARK_SUBMIT")) {

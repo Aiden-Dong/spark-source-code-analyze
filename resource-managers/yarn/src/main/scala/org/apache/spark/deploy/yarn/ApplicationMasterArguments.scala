@@ -20,12 +20,12 @@ package org.apache.spark.deploy.yarn
 import scala.collection.mutable.ArrayBuffer
 
 class ApplicationMasterArguments(val args: Array[String]) {
-  var userJar: String = null
-  var userClass: String = null
-  var primaryPyFile: String = null
-  var primaryRFile: String = null
-  var userArgs: Seq[String] = Nil
-  var propertiesFile: String = null
+  var userJar: String = null                  // 用户目标jar
+  var userClass: String = null                // 用户目标class
+  var primaryPyFile: String = null            // pythone 文件
+  var primaryRFile: String = null             // r 文件
+  var userArgs: Seq[String] = Nil             // 用户参数
+  var propertiesFile: String = null           // 属性文件
 
   parseArgs(args.toList)
 

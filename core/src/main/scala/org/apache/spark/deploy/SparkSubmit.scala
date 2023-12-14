@@ -78,10 +78,12 @@ private[spark] class SparkSubmit extends Logging {
     // be reset before the application starts.
     val uninitLog = initializeLogIfNecessary(true, silent = true)
 
-    val appArgs = parseArguments(args)
+    val appArgs:SparkSubmitArguments = parseArguments(args)  // 解析参数
+
     if (appArgs.verbose) {
       logInfo(appArgs.toString)
     }
+
     appArgs.action match {
       case SparkSubmitAction.SUBMIT => submit(appArgs, uninitLog)
       case SparkSubmitAction.KILL => kill(appArgs)
@@ -130,13 +132,11 @@ private[spark] class SparkSubmit extends Logging {
   }
 
   /**
-   * Submit the application using the provided parameters.
+   * 使用提供的参数提交应用程序
    *
-   * This runs in two steps. First, we prepare the launch environment by setting up
-   * the appropriate classpath, system properties, and application arguments for
-   * running the child main class based on the cluster manager and the deploy mode.
-   * Second, we use this launch environment to invoke the main method of the child
-   * main class.
+   * 这个过程分为两个步骤:
+   *   首先，我们通过设置适当的类路径、系统属性和应用程序参数来准备启动环境，以便根据集群管理器和部署模式运行子主类。
+   *   其次，我们使用这个启动环境来调用子主类的主方法。
    */
   @tailrec
   private def submit(args: SparkSubmitArguments, uninitLog: Boolean): Unit = {
@@ -144,8 +144,7 @@ private[spark] class SparkSubmit extends Logging {
 
     def doRunMain(): Unit = {
       if (args.proxyUser != null) {
-        val proxyUser = UserGroupInformation.createProxyUser(args.proxyUser,
-          UserGroupInformation.getCurrentUser())
+        val proxyUser = UserGroupInformation.createProxyUser(args.proxyUser, UserGroupInformation.getCurrentUser())
         try {
           proxyUser.doAs(new PrivilegedExceptionAction[Unit]() {
             override def run(): Unit = {
@@ -775,12 +774,9 @@ private[spark] class SparkSubmit extends Logging {
    * Note that this main class will not be the one provided by the user if we're
    * running cluster deploy mode or python applications.
    */
-  private def runMain(
-      childArgs: Seq[String],
-      childClasspath: Seq[String],
-      sparkConf: SparkConf,
-      childMainClass: String,
-      verbose: Boolean): Unit = {
+  private def runMain(childArgs: Seq[String], childClasspath: Seq[String], sparkConf: SparkConf,
+                      childMainClass: String, verbose: Boolean): Unit = {
+
     if (verbose) {
       logInfo(s"Main class:\n$childMainClass")
       logInfo(s"Arguments:\n${childArgs.mkString("\n")}")
@@ -790,14 +786,13 @@ private[spark] class SparkSubmit extends Logging {
       logInfo("\n")
     }
 
-    val loader =
-      if (sparkConf.get(DRIVER_USER_CLASS_PATH_FIRST)) {
-        new ChildFirstURLClassLoader(new Array[URL](0),
-          Thread.currentThread.getContextClassLoader)
+    // spark.driver.userClassPathFirst
+    val loader = if (sparkConf.get(DRIVER_USER_CLASS_PATH_FIRST)) {
+        new ChildFirstURLClassLoader(new Array[URL](0), Thread.currentThread.getContextClassLoader)
       } else {
-        new MutableURLClassLoader(new Array[URL](0),
-          Thread.currentThread.getContextClassLoader)
+        new MutableURLClassLoader(new Array[URL](0), Thread.currentThread.getContextClassLoader)
       }
+
     Thread.currentThread.setContextClassLoader(loader)
 
     for (jar <- childClasspath) {
@@ -896,12 +891,10 @@ object SparkSubmit extends CommandLineUtils with Logging {
   private val CLASS_NOT_FOUND_EXIT_STATUS = 101
 
   // Following constants are visible for testing.
-  private[deploy] val YARN_CLUSTER_SUBMIT_CLASS =
-    "org.apache.spark.deploy.yarn.YarnClusterApplication"
+  private[deploy] val YARN_CLUSTER_SUBMIT_CLASS = "org.apache.spark.deploy.yarn.YarnClusterApplication"
   private[deploy] val REST_CLUSTER_SUBMIT_CLASS = classOf[RestSubmissionClientApp].getName()
   private[deploy] val STANDALONE_CLUSTER_SUBMIT_CLASS = classOf[ClientApp].getName()
-  private[deploy] val KUBERNETES_CLUSTER_SUBMIT_CLASS =
-    "org.apache.spark.deploy.k8s.submit.KubernetesClientApplication"
+  private[deploy] val KUBERNETES_CLUSTER_SUBMIT_CLASS = "org.apache.spark.deploy.k8s.submit.KubernetesClientApplication"
 
   override def main(args: Array[String]): Unit = {
     val submit = new SparkSubmit() {
@@ -923,11 +916,9 @@ object SparkSubmit extends CommandLineUtils with Logging {
         try {
           super.doSubmit(args)
         } catch {
-          case e: SparkUserAppException =>
-            exitFn(e.exitCode)
+          case e: SparkUserAppException => exitFn(e.exitCode)
         }
       }
-
     }
 
     submit.doSubmit(args)

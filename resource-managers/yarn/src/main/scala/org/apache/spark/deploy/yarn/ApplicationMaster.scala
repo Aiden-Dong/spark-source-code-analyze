@@ -51,16 +51,16 @@ import org.apache.spark.scheduler.cluster.CoarseGrainedClusterMessages._
 import org.apache.spark.util._
 
 /**
- * Common application master functionality for Spark on Yarn.
+ * Spark On Yanrn 上的主节点应用程序.
  */
 private[spark] class ApplicationMaster(args: ApplicationMasterArguments) extends Logging {
 
-  // TODO: Currently, task to container is computed once (TaskSetManager) - which need not be
-  // optimal as more containers are available. Might need to handle this better.
+  private val isClusterMode = args.userClass != null     // cluster 模式标识
 
-  private val isClusterMode = args.userClass != null
-
+  // spark 配置
   private val sparkConf = new SparkConf()
+
+  // 初始化配置
   if (args.propertiesFile != null) {
     Utils.getPropertiesFromFile(args.propertiesFile).foreach { case (k, v) =>
       sparkConf.set(k, v)
@@ -69,19 +69,21 @@ private[spark] class ApplicationMaster(args: ApplicationMasterArguments) extends
 
   private val securityMgr = new SecurityManager(sparkConf)
 
+  // 指标管理
   private var metricsSystem: Option[MetricsSystem] = None
 
-  // Set system properties for each config entry. This covers two use cases:
-  // - The default configuration stored by the SparkHadoopUtil class
-  // - The user application creating a new SparkConf in cluster mode
-  //
-  // Both cases create a new SparkConf object which reads these configs from system properties.
+  // Spark应用程序主节点会根据系统属性设置每个配置项的值。这涵盖了两种情况：
+  // SparkHadoopUtil类存储的默认配置。
+  // 用户在集群模式下创建的新SparkConf对象。
+  // 无论是默认配置还是用户创建的SparkConf对象，都会从系统属性中读取这些配置。
   sparkConf.getAll.foreach { case (k, v) =>
     sys.props(k) = v
   }
 
+  // hadoop yarn 配置信息
   private val yarnConf = new YarnConfiguration(SparkHadoopUtil.newConfiguration(sparkConf))
 
+  // 类加载器
   private val userClassLoader = {
     val classpath = Client.getUserClasspath(sparkConf)
     val urls = classpath.map { entry =>
@@ -89,6 +91,7 @@ private[spark] class ApplicationMaster(args: ApplicationMasterArguments) extends
     }
 
     if (isClusterMode) {
+      // spark.driver.userClassPathFirst
       if (Client.isUserClassPathFirst(sparkConf, isDriver = true)) {
         new ChildFirstURLClassLoader(urls, Utils.getContextOrSparkClassLoader)
       } else {
@@ -119,10 +122,11 @@ private[spark] class ApplicationMaster(args: ApplicationMasterArguments) extends
       SparkHadoopUtil.get.createSparkUser()
   }
 
+  // yarn client
   private val client = doAsUser { new YarnRMClient() }
 
-  // Default to twice the number of executors (twice the maximum number of executors if dynamic
-  // allocation is enabled), with a minimum of 3.
+  // 默认情况下，Spark在YARN上的执行器数量为两倍（如果启用了动态分配，则为两倍的最大执行器数量），
+  // 最低为3个。这些配置是通过系统属性设置的。
 
   private val maxNumExecutorFailures = {
     val effectiveNumExecutors =
@@ -131,42 +135,43 @@ private[spark] class ApplicationMaster(args: ApplicationMasterArguments) extends
       } else {
         sparkConf.get(EXECUTOR_INSTANCES).getOrElse(0)
       }
-    // By default, effectiveNumExecutors is Int.MaxValue if dynamic allocation is enabled. We need
-    // avoid the integer overflow here.
+    // By default, effectiveNumExecutors is Int.MaxValue if dynamic allocation is enabled.
+    // We need avoid the integer overflow here.
     val defaultMaxNumExecutorFailures = math.max(3,
       if (effectiveNumExecutors > Int.MaxValue / 2) Int.MaxValue else (2 * effectiveNumExecutors))
 
+    // spark.yarn.max.executor.failures
     sparkConf.get(MAX_EXECUTOR_FAILURES).getOrElse(defaultMaxNumExecutorFailures)
   }
 
-  @volatile private var exitCode = 0
+  @volatile private var exitCode = 0                         // 退出码
   @volatile private var unregistered = false
-  @volatile private var finished = false
-  @volatile private var finalStatus = getDefaultFinalStatus
-  @volatile private var finalMsg: String = ""
-  @volatile private var userClassThread: Thread = _
+  @volatile private var finished = false                     // 是否结束
+  @volatile private var finalStatus = getDefaultFinalStatus  // 最终状态
+  @volatile private var finalMsg: String = ""                // 最终信息
+  @volatile private var userClassThread: Thread = _          // 用户class线程
 
-  @volatile private var reporterThread: Thread = _
-  @volatile private var allocator: YarnAllocator = _
+  @volatile private var reporterThread: Thread = _          // 报告线程
+  @volatile private var allocator: YarnAllocator = _        // yarn 资源分配器
 
   // A flag to check whether user has initialized spark context
   @volatile private var registered = false
 
   // Lock for controlling the allocator (heartbeat) thread.
-  private val allocatorLock = new Object()
+  private val allocatorLock = new Object()    // 资源分配锁
 
-  // Steady state heartbeat interval. We want to be reasonably responsive without causing too many
-  // requests to RM.
-  private val heartbeatInterval = {
-    // Ensure that progress is sent before YarnConfiguration.RM_AM_EXPIRY_INTERVAL_MS elapses.
+  // 稳态心跳间隔。
+  // 我们希望能够做出合理的响应，而不会对 RM 造成太多请求。
+  private val heartbeatInterval = {    // 心跳检测时间间隔
+    //确保在 YarnConfiguration.RM_AM_EXPIRY_INTERVAL_MS 过去之前发送进度.
+    // yarn.am.liveness-monitor.expiry-interval-ms
     val expiryInterval = yarnConf.getInt(YarnConfiguration.RM_AM_EXPIRY_INTERVAL_MS, 120000)
+    // spark.yarn.scheduler.heartbeat.interval-ms
     math.max(0, math.min(expiryInterval / 2, sparkConf.get(RM_HEARTBEAT_INTERVAL)))
   }
 
-  // Initial wait interval before allocator poll, to allow for quicker ramp up when executors are
-  // being requested.
-  private val initialAllocationInterval = math.min(heartbeatInterval,
-    sparkConf.get(INITIAL_HEARTBEAT_INTERVAL))
+  // 分配器轮询之前的初始等待间隔，以便在请求执行器时能够更快地启动.
+  private val initialAllocationInterval = math.min(heartbeatInterval, sparkConf.get(INITIAL_HEARTBEAT_INTERVAL))
 
   // Next wait interval before allocator poll.
   private var nextAllocationInterval = initialAllocationInterval
@@ -176,9 +181,8 @@ private[spark] class ApplicationMaster(args: ApplicationMasterArguments) extends
   // In cluster mode, used to tell the AM when the user's SparkContext has been initialized.
   private val sparkContextPromise = Promise[SparkContext]()
 
-  // Load the list of localized files set by the client. This is used when launching executors,
-  // and is loaded here so that these configs don't pollute the Web UI's environment page in
-  // cluster mode.
+  // 加载客户端设置的本地化文件列表。
+  // 这是在启动执行器时使用的，并在此处加载，以便这些配置不会污染集群模式下的 Web UI 环境页面
   private val localResources = doAsUser {
     logInfo("Preparing Local resources")
     val resources = HashMap[String, LocalResource]()
@@ -220,8 +224,8 @@ private[spark] class ApplicationMaster(args: ApplicationMasterArguments) extends
       val status = fs.getFileStatus(new Path(uri))
       // SPARK-16080: Make sure to use the correct name for the destination when distributing the
       // conf archive to executors.
-      val destUri = new URI(uri.getScheme(), uri.getRawSchemeSpecificPart(),
-        Client.LOCALIZED_CONF_DIR)
+      val destUri = new URI(uri.getScheme(), uri.getRawSchemeSpecificPart(), Client.LOCALIZED_CONF_DIR)
+
       setupDistributedCache(destUri.toString(), LocalResourceType.ARCHIVE,
         status.getModificationTime().toString, status.getLen.toString,
         LocalResourceVisibility.PRIVATE.name())
@@ -236,6 +240,7 @@ private[spark] class ApplicationMaster(args: ApplicationMasterArguments) extends
     resources.toMap
   }
 
+  // Application 重试ID
   def getAttemptId(): ApplicationAttemptId = {
     client.getAttemptId()
   }
@@ -269,14 +274,15 @@ private[spark] class ApplicationMaster(args: ApplicationMasterArguments) extends
         attemptID = Option(appAttemptId.getAttemptId.toString)
       }
 
-      new CallerContext(
-        "APPMASTER", sparkConf.get(APP_CALLER_CONTEXT),
+      new CallerContext("APPMASTER", sparkConf.get(APP_CALLER_CONTEXT),
         Option(appAttemptId.getApplicationId.toString), attemptID).setCurrentContext()
 
       logInfo("ApplicationAttemptId: " + appAttemptId)
 
       // This shutdown hook should run *after* the SparkContext is shut down.
       val priority = ShutdownHookManager.SPARK_CONTEXT_SHUTDOWN_PRIORITY - 1
+
+      // 注册退出状态
       ShutdownHookManager.addShutdownHook(priority) { () =>
         val maxAppAttempts = client.getMaxRegAttempts(sparkConf, yarnConf)
         val isLastAttempt = client.getAttemptId().getAttemptId() >= maxAppAttempts
@@ -287,9 +293,8 @@ private[spark] class ApplicationMaster(args: ApplicationMasterArguments) extends
           // If user application is exited ahead of time by calling System.exit(N), here mark
           // this application as failed with EXIT_EARLY. For a good shutdown, user shouldn't call
           // System.exit(0) to terminate the application.
-          finish(finalStatus,
-            ApplicationMaster.EXIT_EARLY,
-            "Shutdown hook called before final status was reported.")
+          // 设置作业结束状态
+          finish(finalStatus, ApplicationMaster.EXIT_EARLY, "Shutdown hook called before final status was reported.")
         }
 
         if (!unregistered) {
@@ -421,9 +426,10 @@ private[spark] class ApplicationMaster(args: ApplicationMasterArguments) extends
     val driverUrl = RpcEndpointAddress(driverRef.address.host, driverRef.address.port,
       CoarseGrainedSchedulerBackend.ENDPOINT_NAME).toString
 
-    // Before we initialize the allocator, let's log the information about how executors will
-    // be run up front, to avoid printing this out for every single executor being launched.
-    // Use placeholders for information that changes such as executor IDs.
+
+    // 在初始化分配器之前，让我们提前记录有关执行器如何运行的信息。
+    // 在初始化分配器之前，我们可以在日志中记录有关执行器如何运行的信息，以避免在每个启动的执行器上都打印出这些信息。
+    // Question: 使用占位符来表示可能会变化的信息，比如执行器的ID。
     logInfo {
       val executorMemory = _sparkConf.get(EXECUTOR_MEMORY).toInt
       val executorCores = _sparkConf.get(EXECUTOR_CORES)
@@ -432,6 +438,7 @@ private[spark] class ApplicationMaster(args: ApplicationMasterArguments) extends
       dummyRunner.launchContextDebugInfo()
     }
 
+    // 创建资源分配器
     allocator = client.createAllocator(
       yarnConf,
       _sparkConf,
@@ -447,6 +454,7 @@ private[spark] class ApplicationMaster(args: ApplicationMasterArguments) extends
     // the allocator is ready to service requests.
     rpcEnv.setupEndpoint("YarnAM", new AMEndpoint(rpcEnv, driverRef))
 
+    // 分配资源
     allocator.allocateResources()
     val ms = MetricsSystem.createMetricsSystem("applicationMaster", sparkConf, securityMgr)
     val prefix = _sparkConf.get(YARN_METRICS_NAMESPACE).getOrElse(appId)
@@ -458,15 +466,16 @@ private[spark] class ApplicationMaster(args: ApplicationMasterArguments) extends
 
   private def runDriver(): Unit = {
     addAmIpFilter(None)
+
+    // 启动并执行用户的主函数
     userClassThread = startUserApplication()
 
     // This a bit hacky, but we need to wait until the spark.driver.port property has
     // been set by the Thread executing the user class.
     logInfo("Waiting for spark context initialization...")
-    val totalWaitTime = sparkConf.get(AM_MAX_WAIT_TIME)
+    val totalWaitTime = sparkConf.get(AM_MAX_WAIT_TIME) // spark.yarn.am.waitTime
     try {
-      val sc = ThreadUtils.awaitResult(sparkContextPromise.future,
-        Duration(totalWaitTime, TimeUnit.MILLISECONDS))
+      val sc = ThreadUtils.awaitResult(sparkContextPromise.future, Duration(totalWaitTime, TimeUnit.MILLISECONDS))
       if (sc != null) {
         rpcEnv = sc.env.rpcEnv
 
@@ -475,9 +484,9 @@ private[spark] class ApplicationMaster(args: ApplicationMasterArguments) extends
         val port = userConf.get("spark.driver.port").toInt
         registerAM(host, port, userConf, sc.ui.map(_.webUrl))
 
-        val driverRef = rpcEnv.setupEndpointRef(
-          RpcAddress(host, port),
-          YarnSchedulerBackend.ENDPOINT_NAME)
+        // RPC 消息通信
+        val driverRef = rpcEnv.setupEndpointRef(RpcAddress(host, port), YarnSchedulerBackend.ENDPOINT_NAME)
+
         createAllocator(driverRef, userConf)
       } else {
         // Sanity check; should never happen in normal operation, since sc should only be null
@@ -646,16 +655,16 @@ private[spark] class ApplicationMaster(args: ApplicationMasterArguments) extends
   }
 
   /**
-   * Start the user class, which contains the spark driver, in a separate Thread.
-   * If the main routine exits cleanly or exits with System.exit(N) for any N
-   * we assume it was successful, for all other cases we assume failure.
+   * 在单独的线程中启动包含 Spark 驱动程序的用户类。
+   * 如果主例程干净地退出或以 System.exit(N) 退出，对于任何 N 我们认为它是成功的，
+   * 对于所有其他情况，我们假设失败。
    *
    * Returns the user thread that was started.
    */
   private def startUserApplication(): Thread = {
     logInfo("Starting the user application in a separate Thread")
 
-    var userArgs = args.userArgs
+    var userArgs = args.userArgs  // 用户参数
     if (args.primaryPyFile != null && args.primaryPyFile.endsWith(".py")) {
       // When running pyspark, the app is run using PythonRunner. The second argument is the list
       // of files to add to PYTHONPATH, which Client.scala already handles, so it's empty.
@@ -665,6 +674,7 @@ private[spark] class ApplicationMaster(args: ApplicationMasterArguments) extends
       // TODO(davies): add R dependencies here
     }
 
+    // 通过反射获取到用户的执行主类
     val mainMethod = userClassLoader.loadClass(args.userClass)
       .getMethod("main", classOf[Array[String]])
 
@@ -675,6 +685,7 @@ private[spark] class ApplicationMaster(args: ApplicationMasterArguments) extends
             logError(s"Could not find static main method in object ${args.userClass}")
             finish(FinalApplicationStatus.FAILED, ApplicationMaster.EXIT_EXCEPTION_USER_CLASS)
           } else {
+            // 调用用户的执行主函数
             mainMethod.invoke(null, userArgs.toArray)
             finish(FinalApplicationStatus.SUCCEEDED, ApplicationMaster.EXIT_SUCCESS)
             logDebug("Done running user class")
@@ -778,7 +789,7 @@ private[spark] class ApplicationMaster(args: ApplicationMasterArguments) extends
 
 object ApplicationMaster extends Logging {
 
-  // exit codes for different causes, no reason behind the values
+  // ApplicaionMaster 应用退出状态
   private val EXIT_SUCCESS = 0
   private val EXIT_UNCAUGHT_EXCEPTION = 10
   private val EXIT_MAX_EXECUTOR_FAILURES = 11

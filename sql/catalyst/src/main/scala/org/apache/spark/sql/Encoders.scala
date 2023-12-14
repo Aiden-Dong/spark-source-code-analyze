@@ -30,8 +30,8 @@ import org.apache.spark.sql.catalyst.expressions.objects.{DecodeUsingSerializer,
 import org.apache.spark.sql.types._
 
 /**
- * :: Experimental ::
- * Methods for creating an [[Encoder]].
+ * :: 实验性 ::
+ * 创建 [[Encoder]] 的方法.
  *
  * @since 1.6.0
  */
@@ -124,18 +124,17 @@ object Encoders {
   def BINARY: Encoder[Array[Byte]] = ExpressionEncoder()
 
   /**
-   * Creates an encoder for Java Bean of type T.
+   * 为T类型的Java Bean创建编码器。
+   * T必须可公开访问。
    *
-   * T must be publicly accessible.
-   *
-   * supported types for java bean field:
-   *  - primitive types: boolean, int, double, etc.
-   *  - boxed types: Boolean, Integer, Double, etc.
+   * java bean 字段支持的类型：
+   *  - 原始类型：boolean、int、double 等。
+   *  - 封装类型: Boolean, Integer, Double, 等.
    *  - String
    *  - java.math.BigDecimal, java.math.BigInteger
-   *  - time related: java.sql.Date, java.sql.Timestamp
-   *  - collection types: only array and java.util.List currently, map support is in progress
-   *  - nested java bean.
+   *  - 时间相关: java.sql.Date, java.sql.Timestamp
+   *  - 集合类型: 目前只支持数组和 java.util.List currently, map类型还不支持
+   *  - 嵌套java bean.
    *
    * @since 1.6.0
    */

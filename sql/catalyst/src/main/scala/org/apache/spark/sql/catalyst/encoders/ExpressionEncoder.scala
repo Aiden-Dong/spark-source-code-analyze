@@ -32,15 +32,11 @@ import org.apache.spark.sql.types.{BooleanType, ObjectType, StructField, StructT
 import org.apache.spark.util.Utils
 
 /**
- * A factory for constructing encoders that convert objects and primitives to and from the
- * internal row format using catalyst expressions and code generation.  By default, the
- * expressions used to retrieve values from an input row when producing an object will be created as
- * follows:
- *  - Classes will have their sub fields extracted by name using [[UnresolvedAttribute]] expressions
- *    and [[UnresolvedExtractValue]] expressions.
- *  - Tuples will have their subfields extracted by position using [[BoundReference]] expressions.
- *  - Primitives will have their values extracted from the first ordinal with a schema that defaults
- *    to the name `value`.
+ * 一个工厂，用于构造编码器(encoder)，通过使用catalyst表达式和代码生成将对象和原始类型转换为内部行格式，
+ * 以及从内部行格式转换回对象。默认情况下，用于在生成对象时从输入行检索值的表达式将如下创建：
+ *  - 类将通过使用 [[UnresolvedAttribute]] 表达式和 [[UnresolvedExtractValue]] 表达式按名称提取其子字段。
+ *  - 元组将通过使用[[BoundReference]]表达式按位置提取其子字段。
+ *  - 原始类型的值将从schema的第一个序数中提取，该schema默认为名称value。
  */
 object ExpressionEncoder {
   def apply[T : TypeTag](): ExpressionEncoder[T] = {

@@ -25,28 +25,25 @@ import org.apache.spark.sql.types._
 
 
 /**
- * :: Experimental ::
- * Used to convert a JVM object of type `T` to and from the internal Spark SQL representation.
+ * :: 实验性的 ::
+ *  用于在JVM中的对象（类型为T）与内部的Spark SQL表示之间进行转换。
  *
  * == Scala ==
- * Encoders are generally created automatically through implicits from a `SparkSession`, or can be
- * explicitly created by calling static methods on [[Encoders]].
- *
+ * Encoders(编码器)通常通过 `SparkSession` 的隐式转换自动创建，也可以通过在[[Encoders]]上调用静态方法来显式创建。
  * {{{
  *   import spark.implicits._
- *
  *   val ds = Seq(1, 2, 3).toDS() // implicitly provided (spark.implicits.newIntEncoder)
  * }}}
  *
  * == Java ==
- * Encoders are specified by calling static methods on [[Encoders]].
+ * Encoders 通过在[[Encoders]]上调用静态方法来指定。
  *
  * {{{
  *   List<String> data = Arrays.asList("abc", "abc", "xyz");
  *   Dataset<String> ds = context.createDataset(data, Encoders.STRING());
  * }}}
  *
- * Encoders can be composed into tuples:
+ * Encoders 可以组合成元组：
  *
  * {{{
  *   Encoder<Tuple2<Integer, String>> encoder2 = Encoders.tuple(Encoders.INT(), Encoders.STRING());
@@ -54,15 +51,14 @@ import org.apache.spark.sql.types._
  *   Dataset<Tuple2<Integer, String>> ds2 = context.createDataset(data2, encoder2);
  * }}}
  *
- * Or constructed from Java Beans:
+ * 或者从Java Beans构造：
  *
  * {{{
  *   Encoders.bean(MyClass.class);
  * }}}
  *
- * == Implementation ==
- *  - Encoders are not required to be thread-safe and thus they do not need to use locks to guard
- *    against concurrent access if they reuse internal buffers to improve performance.
+ * == 实现 ==
+ *  - Encoders 不需要是线程安全的，因此如果它们重用内部缓冲区以提高性能，则不需要使用锁来防止并发访问
  *
  * @since 1.6.0
  */
@@ -74,11 +70,9 @@ import org.apache.spark.sql.types._
   "will be added in future releases.")
 trait Encoder[T] extends Serializable {
 
-  /** Returns the schema of encoding this type of object as a Row. */
+  // 返回将此类型对象编码为 Row 的 schema
   def schema: StructType
 
-  /**
-   * A ClassTag that can be used to construct an Array to contain a collection of `T`.
-   */
+  // 类型标签
   def clsTag: ClassTag[T]
 }

@@ -47,7 +47,7 @@ abstract class SparkPlan extends QueryPlan[SparkPlan] with Logging with Serializ
   /**
    * A handle to the SQL Context that was used to create this plan. Since many operators need
    * access to the sqlContext for RDD operations or configuration this field is automatically
-   * populated by the query planning infrastructure.
+   * populated by the query p]lanning infrastructure.
    */
   @transient final val sqlContext = SparkSession.getActiveSession.map(_.sqlContext).orNull
 

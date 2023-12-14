@@ -82,54 +82,46 @@ private[sql] object Dataset {
 }
 
 /**
- * A Dataset is a strongly typed collection of domain-specific objects that can be transformed
- * in parallel using functional or relational operations. Each Dataset also has an untyped view
- * called a `DataFrame`, which is a Dataset of [[Row]].
+ * 数据集（Dataset）是一种强类型的领域特定对象的集合，可以使用功能或关系操作并行进行转换。
+ * 每个数据集还有一个称为DataFrame的无类型视图，它是[[Row]]的数据集。
  *
- * Operations available on Datasets are divided into transformations and actions. Transformations
- * are the ones that produce new Datasets, and actions are the ones that trigger computation and
- * return results. Example transformations include map, filter, select, and aggregate (`groupBy`).
- * Example actions count, show, or writing data out to file systems.
+ * 在数据集上可用的操作分为transform和action两类。transform是产生新数据集的操作，而动作是触发计算并返回结果的操作。
+ * 示例transform包括map、filter、select和aggregate（groupBy）。
+ * 示例action包括count、show或将数据写出到文件系统。
  *
- * Datasets are "lazy", i.e. computations are only triggered when an action is invoked. Internally,
- * a Dataset represents a logical plan that describes the computation required to produce the data.
- * When an action is invoked, Spark's query optimizer optimizes the logical plan and generates a
- * physical plan for efficient execution in a parallel and distributed manner. To explore the
- * logical plan as well as optimized physical plan, use the `explain` function.
+ * Datasets 是懒加载的， 只有当除法action算子时才会触发计算功能. 在内部Dataset 被表示为一个逻辑计划树（LogicalPlan）.
+ * 当调用action时, Spark的查询优化器优化逻辑计划并生成一个物理计划,以便以并行和分布式的方式进行高效执行。
+ * 要探索逻辑计划以及优化后的物理计划，可以使用`explain`函数。
  *
- * To efficiently support domain-specific objects, an [[Encoder]] is required. The encoder maps
- * the domain specific type `T` to Spark's internal type system. For example, given a class `Person`
- * with two fields, `name` (string) and `age` (int), an encoder is used to tell Spark to generate
- * code at runtime to serialize the `Person` object into a binary structure. This binary structure
- * often has much lower memory footprint as well as are optimized for efficiency in data processing
- * (e.g. in a columnar format). To understand the internal binary representation for data, use the
- * `schema` function.
+ * 为了有效支持领域特定的对象，需要一个[[Encoder]]。Encoder将特定类型T映射到Spark的内部类型系统。
+ * 例如，给定一个具有两个字段name（字符串）和age（整数）的类Person，Encoder用于告诉Spark在运行时生成代码，
+ * 将Person对象序列化为二进制结构。这种二进制结构通常具有较低的内存占用，并且在数据处理效率方面进行了优化（例如，在列格式中）。
+ * 要了解数据的内部二进制表示，请使用schema函数。
  *
- * There are typically two ways to create a Dataset. The most common way is by pointing Spark
- * to some files on storage systems, using the `read` function available on a `SparkSession`.
+ * 通常有两种创建数据集的方式。最常见的方式是通过在SparkSession上使用read函数，指定Spark要读取存储系统上的某些文件。
  * {{{
  *   val people = spark.read.parquet("...").as[Person]  // Scala
  *   Dataset<Person> people = spark.read().parquet("...").as(Encoders.bean(Person.class)); // Java
  * }}}
  *
- * Datasets can also be created through transformations available on existing Datasets. For example,
- * the following creates a new Dataset by applying a filter on the existing one:
+ *
+ * 还可以通过对现有数据集使用的转换来创建数据集。
+ * 例如，以下通过在现有数据集上应用过滤器来创建新数据集：
  * {{{
  *   val names = people.map(_.name)  // in Scala; names is a Dataset[String]
- *   Dataset<String> names = people.map((Person p) -> p.name, Encoders.STRING));
+ *   Dataset<String> names = people.map((Person p) -> p.name, Encoders.STRING());
  * }}}
  *
- * Dataset operations can also be untyped, through various domain-specific-language (DSL)
- * functions defined in: Dataset (this class), [[Column]], and [[functions]]. These operations
- * are very similar to the operations available in the data frame abstraction in R or Python.
+ * Dataset 操作也可以是无类型的，通过各种领域特定语言（DSL）中定义的函数进行，
+ * 这些函数定义在：Dataset（此类），[[Column]] 和 [[functions]]。这些操作与R或Python中的数据框抽象中提供的操作非常相似。
  *
- * To select a column from the Dataset, use `apply` method in Scala and `col` in Java.
+ * 要从数据集中选择一列，可以在Scala中使用apply方法，在Java中使用col。
  * {{{
  *   val ageCol = people("age")  // in Scala
  *   Column ageCol = people.col("age"); // in Java
  * }}}
  *
- * Note that the [[Column]] type can also be manipulated through its various functions.
+ * 请注意，[[Column]] 类型还可以通过其各种函数进行操作。
  * {{{
  *   // The following creates a new column that increases everybody's age by 10.
  *   people("age") + 10  // in Scala
@@ -164,7 +156,6 @@ private[sql] object Dataset {
  * @groupname action Actions
  * @groupname untypedrel Untyped transformations
  * @groupname typedrel Typed transformations
- *
  * @since 1.6.0
  */
 @InterfaceStability.Stable
@@ -174,11 +165,11 @@ class Dataset[T] private[sql](
     encoder: Encoder[T])
   extends Serializable {
 
+  // 解析逻辑树动作
   queryExecution.assertAnalyzed()
 
-  // Note for Spark contributors: if adding or updating any action in `Dataset`, please make sure
-  // you wrap it with `withNewExecutionId` if this actions doesn't call other action.
-
+  // 对于Spark的贡献者注意事项：
+  // 如果在Dataset中添加或更新任何动作，请确保如果该动作不调用其他动作，则用withNewExecutionId进行包装。
   def this(sparkSession: SparkSession, logicalPlan: LogicalPlan, encoder: Encoder[T]) = {
     this(sparkSession, sparkSession.sessionState.executePlan(logicalPlan), encoder)
   }
@@ -188,10 +179,9 @@ class Dataset[T] private[sql](
   }
 
   @transient private[sql] val logicalPlan: LogicalPlan = {
-    // For various commands (like DDL) and queries with side effects, we force query execution
-    // to happen right away to let these side effects take place eagerly.
+    // 对于各种命令（如DDL）和带有副作用的查询，我们强制立即执行查询，以便让这些副作用立即发生。
     queryExecution.analyzed match {
-      case c: Command =>
+      case c: Command =>   // 如果是直接执行命令
         LocalRelation(c.output, withAction("command", queryExecution)(_.executeCollect()))
       case u @ Union(children) if children.forall(_.isInstanceOf[Command]) =>
         LocalRelation(u.output, withAction("command", queryExecution)(_.executeCollect()))
@@ -201,21 +191,22 @@ class Dataset[T] private[sql](
   }
 
   /**
-   * Currently [[ExpressionEncoder]] is the only implementation of [[Encoder]], here we turn the
-   * passed in encoder to [[ExpressionEncoder]] explicitly, and mark it implicit so that we can use
-   * it when constructing new Dataset objects that have the same object type (that will be
-   * possibly resolved to a different schema).
+   * 功能 : 将 [[Encoder]] 强制转化为 [[ExpressionEncoder]] 类型
+   *
+   * 目前[[ExpressionEncoder]]是[[Encoder]]的唯一实现，我们在这里将传入的编码器显式转换为[[ExpressionEncoder]]，并将其标记为隐式，
+   * 以便在构建具有相同对象类型的新数据集对象时使用它（可能会被解析为不同的模式）。
    */
   private[sql] implicit val exprEnc: ExpressionEncoder[T] = encoderFor(encoder)
 
   // The deserializer expression which can be used to build a projection and turn rows to objects
   // of type T, after collecting rows to the driver side.
+  // 可用于构建投影并将行转换为类型 T 的对象的反序列化表达式，此操作在将行收集到 driver 程序端后发生。
   private lazy val deserializer =
     exprEnc.resolveAndBind(logicalPlan.output, sparkSession.sessionState.analyzer).deserializer
 
+  // 类型标签
   private implicit def classTag = exprEnc.clsTag
 
-  // sqlContext must be val because a stable identifier is expected when you import implicits
   @transient lazy val sqlContext: SQLContext = sparkSession.sqlContext
 
   private[sql] def resolve(colName: String): NamedExpression = {
@@ -226,6 +217,7 @@ class Dataset[T] private[sql](
       }
   }
 
+  // 数字列
   private[sql] def numericColumns: Seq[Expression] = {
     schema.fields.filter(_.dataType.isInstanceOf[NumericType]).map { n =>
       queryExecution.analyzed.resolveQuoted(n.name, sparkSession.sessionState.analyzer.resolver).get
@@ -233,19 +225,15 @@ class Dataset[T] private[sql](
   }
 
   /**
-   * Get rows represented in Sequence by specific truncate and vertical requirement.
-   *
+   * 按照特定的截断和垂直要求获取以序列表示的行。
    * @param numRows Number of rows to return
-   * @param truncate If set to more than 0, truncates strings to `truncate` characters and
-   *                   all cells will be aligned right.
+   * @param truncate If set to more than 0, truncates strings to `truncate` characters and all cells will be aligned right.
    */
-  private[sql] def getRows(
-      numRows: Int,
-      truncate: Int): Seq[Seq[String]] = {
+  private[sql] def getRows(numRows: Int, truncate: Int): Seq[Seq[String]] = {
     val newDf = toDF()
     val castCols = newDf.logicalPlan.output.map { col =>
-      // Since binary types in top-level schema fields have a specific format to print,
-      // so we do not cast them to strings here.
+      // 由于顶级模式字段中的二进制类型有特定的打印格式，
+      // 因此我们在这里不将它们转换为字符串。
       if (col.dataType == BinaryType) {
         Column(col)
       } else {

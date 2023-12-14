@@ -73,8 +73,8 @@ private[spark] class TaskSchedulerImpl(
   val SPECULATION_INTERVAL_MS = conf.getTimeAsMs("spark.speculation.interval", "100ms")
 
   // Duplicate copies of a task will only be launched if the original copy has been running for
-  // at least this amount of time. This is to avoid the overhead of launching speculative copies
-  // of tasks that are very short.
+  // at least this amount of time.
+  // This is to avoid the overhead of launching speculative copies of tasks that are very short.
   val MIN_TIME_TO_SPECULATION = 100
 
   private val speculationScheduler =
@@ -86,8 +86,7 @@ private[spark] class TaskSchedulerImpl(
   // CPUs to request per task
   val CPUS_PER_TASK = conf.getInt("spark.task.cpus", 1)
 
-  // TaskSetManagers are not thread safe, so any access to one should be synchronized
-  // on this class.
+  // TaskSetManagers are not thread safe, so any access to one should be synchronized on this class.
   private val taskSetsByStageIdAndAttempt = new HashMap[Int, HashMap[Int, TaskSetManager]]
 
   // Protected by `this`
@@ -197,15 +196,13 @@ private[spark] class TaskSchedulerImpl(
     this.synchronized {
       val manager = createTaskSetManager(taskSet, maxTaskFailures)
       val stage = taskSet.stageId
-      val stageTaskSets =
-        taskSetsByStageIdAndAttempt.getOrElseUpdate(stage, new HashMap[Int, TaskSetManager])
+      val stageTaskSets = taskSetsByStageIdAndAttempt.getOrElseUpdate(stage, new HashMap[Int, TaskSetManager])
       stageTaskSets(taskSet.stageAttemptId) = manager
       val conflictingTaskSet = stageTaskSets.exists { case (_, ts) =>
         ts.taskSet != taskSet && !ts.isZombie
       }
       if (conflictingTaskSet) {
-        throw new IllegalStateException(s"more than one active taskSet for stage $stage:" +
-          s" ${stageTaskSets.toSeq.map{_._2.taskSet.id}.mkString(",")}")
+        throw new IllegalStateException(s"more than one active taskSet for stage $stage: ${stageTaskSets.toSeq.map{_._2.taskSet.id}.mkString(",")}")
       }
       schedulableBuilder.addTaskSetManager(manager, manager.taskSet.properties)
 

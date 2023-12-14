@@ -26,29 +26,27 @@ import java.util.Map;
 
 import static org.apache.spark.launcher.CommandBuilderUtils.*;
 
-/**
- * Command line interface for the Spark launcher. Used internally by Spark scripts.
+/*******
+ * Spark启动器的命令行界面，由Spark脚本在内部使用。.
  */
 class Main {
 
   /**
-   * Usage: Main [class] [class args]
+   * 用法: Main [class] [class args]
    * <p>
-   * This CLI works in two different modes:
+   * 此命令行界面在两种不同的模式下工作 :
    * <ul>
-   *   <li>"spark-submit": if <i>class</i> is "org.apache.spark.deploy.SparkSubmit", the
-   *   {@link SparkLauncher} class is used to launch a Spark application.</li>
-   *   <li>"spark-class": if another class is provided, an internal Spark class is run.</li>
+   *   <li>"spark-submit": if <i>class</i> is "org.apache.spark.deploy.SparkSubmit",
+   *   使用 {@link SparkLauncher} 类启动Spark应用程序.</li>
+   *   <li>"spark-class": 如果提供另一个类，将运行内部的Spark类.</li>
    * </ul>
    *
-   * This class works in tandem with the "bin/spark-class" script on Unix-like systems, and
-   * "bin/spark-class2.cmd" batch script on Windows to execute the final command.
+   * 此类与Unix类似系统上的 bin/spark-class 脚本以及 Windows 上的 bin/spark-class2.cmd 批处理脚本协同工作，用于执行最终的命令
    * <p>
-   * On Unix-like systems, the output is a list of command arguments, separated by the NULL
-   * character. On Windows, the output is a command line suitable for direct execution from the
-   * script.
+   * 在类似Unix的系统上，输出是由空字符分隔的命令参数列表。在Windows上，输出是适合从脚本直接执行的命令行。
    */
   public static void main(String[] argsArray) throws Exception {
+
     checkArgument(argsArray.length > 0, "Not enough arguments: missing class name.");
 
     List<String> args = new ArrayList<>(Arrays.asList(argsArray));

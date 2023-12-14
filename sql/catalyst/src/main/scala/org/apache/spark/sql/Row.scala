@@ -30,7 +30,7 @@ import org.apache.spark.sql.types.StructType
 @InterfaceStability.Stable
 object Row {
   /**
-   * This method can be used to extract fields from a [[Row]] object in a pattern match. Example:
+   * 这个方法可以用于在schema匹配中从[[Row]]对象中提取字段。例如：
    * {{{
    * import org.apache.spark.sql._
    *
@@ -68,78 +68,69 @@ object Row {
 
 
 /**
- * Represents one row of output from a relational operator.  Allows both generic access by ordinal,
- * which will incur boxing overhead for primitives, as well as native primitive access.
+ * 表示来自关系运算符的输出中的一行。允许通过序数进行通用访问，对于原始类型将产生装箱开销，以及本机原始类型访问。
+ * 使用本机原始类型接口检索null值是无效的，而是用户必须在尝试检索可能为null的值之前检查isNullAt。
  *
- * It is invalid to use the native primitive interface to retrieve a value that is null, instead a
- * user must check `isNullAt` before attempting to retrieve a value that might be null.
+ * 可以使用 `RowFactory.create()`(Java) 或者是 `Row.apply()`(scala) 来创建一个新的Row
  *
- * To create a new Row, use `RowFactory.create()` in Java or `Row.apply()` in Scala.
- *
- * A [[Row]] object can be constructed by providing field values. Example:
+ * 可以通过提供字段值来构造[[Row]]对象。 例如:
  * {{{
- * import org.apache.spark.sql._
+ *     import org.apache.spark.sql._
  *
- * // Create a Row from values.
- * Row(value1, value2, value3, ...)
- * // Create a Row from a Seq of values.
- * Row.fromSeq(Seq(value1, value2, ...))
+ *     // 直接通过多个值来创建 Row 对象
+ *     Row(value1, value2, value3, ...)
+ *     // 通过 Seq 对象来创建 Row 对象
+ *     Row.fromSeq(Seq(value1, value2, ...))
  * }}}
  *
- * A value of a row can be accessed through both generic access by ordinal,
- * which will incur boxing overhead for primitives, as well as native primitive access.
- * An example of generic access by ordinal:
+ * 可以通过序数进行通用访问来访问行的值，对于原始类型将产生装箱开销，
+ * 也可以进行本机原始类型访问。
+ * 通用访问的例子是：
  * {{{
- * import org.apache.spark.sql._
+ *     import org.apache.spark.sql._
  *
- * val row = Row(1, true, "a string", null)
- * // row: Row = [1,true,a string,null]
- * val firstValue = row(0)
- * // firstValue: Any = 1
- * val fourthValue = row(3)
- * // fourthValue: Any = null
+ *     val row = Row(1, true, "a string", null)
+ *     // row: Row = [1,true,a string,null]
+ *     val firstValue = row(0)    // 通过序号访问
+ *     // firstValue: Any = 1
+ *     val fourthValue = row(3)   // 通过序号访问
+ *     // fourthValue: Any = null
  * }}}
  *
- * For native primitive access, it is invalid to use the native primitive interface to retrieve
- * a value that is null, instead a user must check `isNullAt` before attempting to retrieve a
- * value that might be null.
- * An example of native primitive access:
+ * 对于本机原始类型访问，使用本机原始类型接口检索null值是无效的，而是用户必须在尝试检索可能为null的值之前检查isNullAt。
+ * 本机原始类型访问的例子是：
  * {{{
- * // using the row from the previous example.
- * val firstValue = row.getInt(0)
- * // firstValue: Int = 1
- * val isNull = row.isNullAt(3)
- * // isNull: Boolean = true
+ *     val firstValue = row.getInt(0)
+ *     // firstValue: Int = 1
+ *     val isNull = row.isNullAt(3)      // 判断是否为空
+ *     // isNull: Boolean = true
  * }}}
  *
- * In Scala, fields in a [[Row]] object can be extracted in a pattern match. Example:
+ * 在Scala中，可以在模式匹配中提取[[Row]]对象中的字段。示例：
  * {{{
- * import org.apache.spark.sql._
+ *     import org.apache.spark.sql._
  *
- * val pairs = sql("SELECT key, value FROM src").rdd.map {
- *   case Row(key: Int, value: String) =>
- *     key -> value
- * }
+ *     val pairs = sql("SELECT key, value FROM src").rdd.map {
+ *       case Row(key: Int, value: String) =>
+ *         key -> value
+ *     }
  * }}}
  *
  * @since 1.3.0
  */
 @InterfaceStability.Stable
 trait Row extends Serializable {
-  /** Number of elements in the Row. */
+  // Row 的元素数量
   def size: Int = length
 
-  /** Number of elements in the Row. */
+  // Row 的元素数量
   def length: Int
 
-  /**
-   * Schema for the row.
-   */
   def schema: StructType = null
 
   /**
-   * Returns the value at position i. If the value is null, null is returned. The following
-   * is a mapping between Spark SQL types and return types:
+   * 返回位于i处的数值，如果当前的数值是null,则直接返回null.
+   * 以下是Spark SQL类型和返回类型之间的映射：
    *
    * {{{
    *   BooleanType -> java.lang.Boolean
@@ -162,29 +153,6 @@ trait Row extends Serializable {
    */
   def apply(i: Int): Any = get(i)
 
-  /**
-   * Returns the value at position i. If the value is null, null is returned. The following
-   * is a mapping between Spark SQL types and return types:
-   *
-   * {{{
-   *   BooleanType -> java.lang.Boolean
-   *   ByteType -> java.lang.Byte
-   *   ShortType -> java.lang.Short
-   *   IntegerType -> java.lang.Integer
-   *   FloatType -> java.lang.Float
-   *   DoubleType -> java.lang.Double
-   *   StringType -> String
-   *   DecimalType -> java.math.BigDecimal
-   *
-   *   DateType -> java.sql.Date
-   *   TimestampType -> java.sql.Timestamp
-   *
-   *   BinaryType -> byte array
-   *   ArrayType -> scala.collection.Seq (use getList for java.util.List)
-   *   MapType -> scala.collection.Map (use getJavaMap for java.util.Map)
-   *   StructType -> org.apache.spark.sql.Row
-   * }}}
-   */
   def get(i: Int): Any
 
   /** Checks whether the value at position i is null. */

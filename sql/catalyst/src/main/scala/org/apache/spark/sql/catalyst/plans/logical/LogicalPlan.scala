@@ -108,9 +108,8 @@ abstract class LogicalPlan
     outputAttributes.resolve(nameParts, resolver)
 
   /**
-   * Given an attribute name, split it to name parts by dot, but
-   * don't split the name parts quoted by backticks, for example,
-   * `ab.cd`.`efg` should be split into two parts "ab.cd" and "efg".
+   * 给定一个属性名，通过点将其拆分为名称部分，但是不要拆分由反引号引起的名称部分，
+   * 例如，`ab.cd`.`efg`` 应该被拆分成两个部分："ab.cd" 和 "efg"。
    */
   def resolveQuoted(
       name: String,
